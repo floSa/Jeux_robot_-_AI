@@ -31,8 +31,12 @@ Crossy_Road/
 ├── ai_genetic.py   # MLP numpy, capteurs, algorithme génétique, persistance .npz
 ├── ui.py           # monitoring Pygame (rendu 2D + HUD), aucune logique de jeu
 ├── main.py         # orchestrateur CLI : play / train / bench
+├── AUDIT.md        # audit du code : schémas d'architecture et plan d'amélioration
 └── pyproject.toml  # dépendances gérées par uv (numpy, pygame)
 ```
+
+Les schémas architectural et fonctionnel (Mermaid) ainsi que le plan d'amélioration priorisé
+sont dans [AUDIT.md](AUDIT.md).
 
 ### Moteur découplé
 
