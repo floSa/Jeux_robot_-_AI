@@ -1,0 +1,160 @@
+"""Monitoring Pygame minimaliste : rendu 2D à gauche, statistiques à droite.
+
+Aucune logique de jeu ici : le renderer consomme l'état du moteur en lecture
+seule. La simulation reste exécutable sans ce module (entraînement headless).
+"""
+
+from __future__ import annotations
+
+import pygame
+
+from config import (
+    AI_TIME_BUDGET_MS,
+    CELL_SIZE,
+    FPS,
+    GRID_WIDTH,
+    PANEL_WIDTH,
+    RIVER,
+    ROAD,
+    SAFE,
+    TARGET_SCORE,
+    VIEW_ROWS,
+)
+from engine import Engine
+from ai_base import BaseAI
+
+# Palette (RGB)
+COL_BG = (18, 18, 24)
+COL_PANEL = (28, 28, 36)
+COL_TEXT = (230, 230, 230)
+COL_TEXT_DIM = (150, 150, 160)
+COL_SAFE = (72, 120, 60)
+COL_ROAD = (70, 70, 78)
+COL_RIVER = (42, 78, 140)
+COL_TREE = (30, 62, 26)
+COL_CAR = (210, 60, 50)
+COL_LOG = (140, 96, 50)
+COL_PLAYER = (250, 210, 60)
+COL_DEAD = (235, 60, 60)
+COL_WON = (80, 220, 120)
+COL_GRID = (0, 0, 0)
+COL_BUDGET_OK = (80, 200, 120)
+COL_BUDGET_KO = (235, 90, 60)
+
+_LINE_COLORS = {SAFE: COL_SAFE, ROAD: COL_ROAD, RIVER: COL_RIVER}
+
+
+class Renderer:
+    """Fenêtre de monitoring : grille + panneau HUD."""
+
+    def __init__(self, title: str = "Crossy IA") -> None:
+        pygame.init()
+        self.game_width = GRID_WIDTH * CELL_SIZE
+        self.height = VIEW_ROWS * CELL_SIZE
+        self.screen = pygame.display.set_mode((self.game_width + PANEL_WIDTH, self.height))
+        pygame.display.set_caption(title)
+        self.font = pygame.font.SysFont("consolas,dejavusansmono,monospace", 15)
+        self.font_big = pygame.font.SysFont("consolas,dejavusansmono,monospace", 20, bold=True)
+        self.clock = pygame.time.Clock()
+
+    # ------------------------------------------------------------- événements
+
+    def handle_events(self) -> bool:
+        """False si l'utilisateur demande la fermeture (croix ou Échap)."""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return False
+        return True
+
+    # ------------------------------------------------------------------ rendu
+
+    def draw(self, engine: Engine, ai: BaseAI, last_ms: float) -> None:
+        self.screen.fill(COL_BG)
+        cam_bottom = max(0, engine.player_y - VIEW_ROWS // 3)
+        self._draw_world(engine, cam_bottom)
+        self._draw_panel(engine, ai, last_ms)
+        pygame.display.flip()
+        self.clock.tick(FPS)
+
+    def _cell_rect(self, x: int, y: int, cam_bottom: int) -> pygame.Rect:
+        row_from_bottom = y - cam_bottom
+        py = self.height - (row_from_bottom + 1) * CELL_SIZE
+        return pygame.Rect(x * CELL_SIZE, py, CELL_SIZE, CELL_SIZE)
+
+    def _draw_world(self, engine: Engine, cam_bottom: int) -> None:
+        tick = engine.tick
+        for y in range(cam_bottom, cam_bottom + VIEW_ROWS):
+            line = engine.line_at(y)
+            band = pygame.Rect(
+                0,
+                self.height - (y - cam_bottom + 1) * CELL_SIZE,
+                self.game_width,
+                CELL_SIZE,
+            )
+            pygame.draw.rect(self.screen, _LINE_COLORS[line.kind], band)
+            if line.kind == SAFE:
+                for x in engine.tree_columns(y):
+                    pygame.draw.rect(
+                        self.screen, COL_TREE, self._cell_rect(x, y, cam_bottom).inflate(-6, -6)
+                    )
+            else:
+                color = COL_CAR if line.kind == ROAD else COL_LOG
+                for x in engine.occupied_columns(y, tick):
+                    pygame.draw.rect(
+                        self.screen, color, self._cell_rect(x, y, cam_bottom).inflate(-4, -4)
+                    )
+        # quadrillage discret
+        for gx in range(GRID_WIDTH + 1):
+            pygame.draw.line(
+                self.screen, COL_GRID, (gx * CELL_SIZE, 0), (gx * CELL_SIZE, self.height), 1
+            )
+        # joueur
+        if engine.won:
+            color = COL_WON
+        elif engine.alive:
+            color = COL_PLAYER
+        else:
+            color = COL_DEAD
+        rect = self._cell_rect(engine.player_x, engine.player_y, cam_bottom).inflate(-8, -8)
+        pygame.draw.rect(self.screen, color, rect, border_radius=4)
+
+    def _draw_panel(self, engine: Engine, ai: BaseAI, last_ms: float) -> None:
+        panel = pygame.Rect(self.game_width, 0, PANEL_WIDTH, self.height)
+        pygame.draw.rect(self.screen, COL_PANEL, panel)
+        x0 = self.game_width + 16
+        y = 14
+
+        y = self._text(f"IA : {ai.name}", x0, y, self.font_big, COL_TEXT) + 8
+        if engine.won:
+            statut, col = "GAGNE", COL_WON
+        elif engine.alive:
+            statut, col = "VIVANT", COL_TEXT
+        else:
+            statut, col = "MORT", COL_DEAD
+        y = self._text(f"Statut : {statut}", x0, y, self.font, col) + 10
+
+        y = self._text(f"Score Y : {engine.score} / {TARGET_SCORE}", x0, y, self.font, COL_TEXT)
+        y = self._text(f"Tick    : {engine.tick}", x0, y, self.font, COL_TEXT)
+        y = self._text(f"Seed    : {engine.seed}", x0, y, self.font, COL_TEXT_DIM) + 10
+
+        col_ms = COL_BUDGET_OK if last_ms <= AI_TIME_BUDGET_MS else COL_BUDGET_KO
+        y = self._text(
+            f"Dernier coup : {last_ms:6.2f} ms (budget {AI_TIME_BUDGET_MS:.0f} ms)",
+            x0, y, self.font, col_ms,
+        ) + 10
+
+        if ai.stats:
+            y = self._text("Efficacite :", x0, y, self.font, COL_TEXT_DIM)
+            for key, value in ai.stats.items():
+                y = self._text(f"  {key:<10}: {value:,.0f}", x0, y, self.font, COL_TEXT)
+
+    def _text(self, text: str, x: int, y: int, font: pygame.font.Font, color: tuple) -> int:
+        self.screen.blit(font.render(text, True, color), (x, y))
+        return y + font.get_height() + 4
+
+    # ------------------------------------------------------------------ divers
+
+    def close(self) -> None:
+        pygame.quit()
