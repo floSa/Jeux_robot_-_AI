@@ -1,0 +1,13 @@
+[project]
+name = "crossy-ia"
+version = "1.0.0"
+description = "Simulation Crossy Road découplée de l'affichage + comparatif d'IA (heuristique, recherche prédictive, neuroévolution)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pygame>=2.5",
+]
+
+[tool.uv]
+package = false

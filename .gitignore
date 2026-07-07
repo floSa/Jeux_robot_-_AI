@@ -1,0 +1,14 @@
+# Environnement virtuel
+.venv/
+
+# Caches Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Modèles entraînés (artefacts binaires régénérables)
+models/
+
+# Divers
+.DS_Store
+Thumbs.db
