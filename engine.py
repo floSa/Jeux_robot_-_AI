@@ -1,6 +1,8 @@
 """Moteur de simulation Crossy Road — pur, déterministe, sans dépendance graphique.
 
 Phase 1 : trottoirs (arbres statiques) et routes (voitures mobiles).
+Phase 2 : rivières et troncs — le joueur doit être superposé à un tronc,
+          et le tronc porteur l'entraîne horizontalement au tick suivant.
 
 Toute la dynamique est prédictible en O(1) à n'importe quel tick futur t :
     X_t = (X_initial + direction * (t // period)) % GRID_WIDTH
@@ -17,9 +19,13 @@ from config import (
     CENTER_X,
     GRID_WIDTH,
     LINE_WEIGHTS,
+    LOG_LENGTH,
+    MAX_CONSECUTIVE_RIVERS,
     MAX_TICKS,
     MAX_TREES_PER_LINE,
     PERIODS,
+    RIVER,
+    RIVER_SPACING_WEIGHTS,
     ROAD,
     SAFE,
     SEARCH_HORIZON,
@@ -35,7 +41,11 @@ EMPTY: frozenset[int] = frozenset()
 
 @dataclass(frozen=True)
 class Line:
-    """Ligne immuable du monde : type + paramètres cinématiques de ses obstacles."""
+    """Ligne immuable du monde : type + paramètres cinématiques de ses obstacles.
+
+    Les obstacles mobiles sont des voitures (ROAD, mortelles) ou des troncs
+    (RIVER, plateformes de survie) ; même cinématique modulo dans les deux cas.
+    """
 
     y: int
     kind: int
@@ -84,6 +94,7 @@ class Engine:
         self.trees: set[tuple[int, int]] = set()
         self._trees_by_row: dict[int, frozenset[int]] = {}
         self._occ_cache: dict[tuple[int, int], frozenset[int]] = {}
+        self._consecutive_rivers = 0
         self._ensure_lines(SEARCH_HORIZON + START_SAFE_ROWS)
 
     # ------------------------------------------------------------------ monde
@@ -95,10 +106,14 @@ class Engine:
 
     def _generate_line(self, y: int) -> Line:
         if y < START_SAFE_ROWS:
+            self._consecutive_rivers = 0
             return Line(y=y, kind=SAFE)
-        kinds = (SAFE, ROAD)
-        weights = tuple(LINE_WEIGHTS[k] for k in kinds)
+        kinds = list(LINE_WEIGHTS)
+        weights = [LINE_WEIGHTS[k] for k in kinds]
+        if self._consecutive_rivers >= MAX_CONSECUTIVE_RIVERS:
+            weights[kinds.index(RIVER)] = 0.0
         kind = self.rng.choices(kinds, weights=weights)[0]
+        self._consecutive_rivers = self._consecutive_rivers + 1 if kind == RIVER else 0
         if kind == SAFE:
             cols = frozenset(
                 x for x in range(self.width) if self.rng.random() < TREE_DENSITY
@@ -107,13 +122,19 @@ class Engine:
             self._trees_by_row[y] = cols
             self.trees.update((x, y) for x in cols)
             return Line(y=y, kind=SAFE)
+        if kind == RIVER:
+            spacing = self.rng.choices(SPACINGS, weights=RIVER_SPACING_WEIGHTS)[0]
+            length = LOG_LENGTH
+        else:
+            spacing = self.rng.choice(SPACINGS)
+            length = CAR_LENGTH
         return Line(
             y=y,
-            kind=ROAD,
+            kind=kind,
             direction=self.rng.choice((-1, 1)),
             period=self.rng.choice(PERIODS),
-            spacing=self.rng.choice(SPACINGS),
-            length=CAR_LENGTH,
+            spacing=spacing,
+            length=length,
             phase=self.rng.randrange(self.width),
         )
 
@@ -146,31 +167,53 @@ class Engine:
     def get_obstacles_at_tick(
         self, tick: int, y_min: int | None = None, y_max: int | None = None
     ) -> set[tuple[int, int]]:
-        """Coordonnées (x, y) mortelles au tick t sur la fenêtre [y_min, y_max]."""
+        """Coordonnées (x, y) mortelles au tick t sur la fenêtre [y_min, y_max].
+
+        ROAD : cases des voitures. RIVER : eau libre (complément des troncs).
+        """
         if y_min is None:
             y_min = self.player_y - 1
         if y_max is None:
             y_max = self.player_y + SEARCH_HORIZON
         danger: set[tuple[int, int]] = set()
         for y in range(max(0, y_min), y_max + 1):
-            if self.line_at(y).kind == ROAD:
+            kind = self.line_at(y).kind
+            if kind == ROAD:
                 danger.update((x, y) for x in self.occupied_columns(y, tick))
+            elif kind == RIVER:
+                occ = self.occupied_columns(y, tick)
+                danger.update((x, y) for x in range(self.width) if x not in occ)
         return danger
 
     # ------------------------------------------------------------- transition
 
+    def apply_drift(self, x: int, y: int, tick: int) -> int:
+        """X après entraînement éventuel par le tronc porteur entre t et t+1.
+
+        Le tronc franchit le bord par modulo : le joueur porté suit son wrap.
+        """
+        line = self.line_at(y)
+        if line.kind == RIVER and x in self.occupied_columns(y, tick):
+            return (x + line.shift(tick + 1) - line.shift(tick)) % self.width
+        return x
+
     def next_state(self, x: int, y: int, tick: int, action: Action) -> tuple[int, int, bool]:
         """Transition pure (x, y, tick) -> (x', y', vivant) après `action`.
 
-        Un déplacement hors grille ou vers un arbre est bloqué (position inchangée).
+        Ordre : 1) dérive du tronc porteur, 2) action volontaire (hors grille ou
+        arbre = bloquée), 3) verdict de survie sur la case d'arrivée au tick t+1.
         """
+        x = self.apply_drift(x, y, tick)
         dx, dy = action
         nx, ny = x + dx, y + dy
         if 0 <= nx < self.width and ny >= 0:
             self._ensure_lines(ny)
             if (nx, ny) not in self.trees:
                 x, y = nx, ny
-        if self.line_at(y).kind == ROAD and x in self.occupied_columns(y, tick + 1):
+        kind = self.line_at(y).kind
+        if kind == ROAD and x in self.occupied_columns(y, tick + 1):
+            return x, y, False
+        if kind == RIVER and x not in self.occupied_columns(y, tick + 1):
             return x, y, False
         return x, y, True
 
@@ -217,4 +260,5 @@ class Engine:
         other.trees = set(self.trees)
         other._trees_by_row = dict(self._trees_by_row)
         other._occ_cache = self._occ_cache
+        other._consecutive_rivers = self._consecutive_rivers
         return other
