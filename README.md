@@ -69,8 +69,9 @@ Principes clés :
 - **Coordonnées entières** `(x, y)` sur une grille de 19 colonnes, hauteur infinie
   (les lignes sont générées paresseusement, à la demande, par un `random.Random(seed)` dédié —
   chaque partie est entièrement reproductible par sa graine).
-- **Lignes immuables** (`dataclass frozen`) : type (`SAFE`/`ROAD`/`RIVER`) + paramètres
-  cinématiques (direction, période, espacement 6 ou 12, longueur, phase initiale).
+- **Lignes immuables** (`dataclass frozen`) : type (`SAFE`/`ROAD`/`RIVER`) + cinématique
+  (direction, période) + un **motif de blocs** `(position, longueur)` d'obstacles de
+  longueurs variées (voitures 2 / camions 3 / troncs 2-4) qui défile en boucle.
 - **Arbres statiques dans un `set()`** : test de blocage en O(1).
 - **Le monde est indépendant du joueur** : les IA projettent l'avenir via la fonction pure
   `next_state(x, y, tick, action)` sans cloner le moteur (un `clone()` complet existe
@@ -136,9 +137,10 @@ du premier obstacle au tick $t$ est :
 $$X_t = \left(X_{initial} + v \cdot \left\lfloor \tfrac{t}{période} \right\rfloor\right) \bmod L$$
 
 avec $v \in \{-1, +1\}$ la direction, la *période* le nombre de ticks entre deux pas
-(vitesse effective $v/période$), et $L = 19$ la largeur du terrain. Les autres obstacles s'en
-déduisent par décalages fixes de 6 ou 12 cases. **Aucune simulation n'est déroulée** pour
-connaître l'état à $t+15$ : c'est un calcul direct.
+(vitesse effective $v/période$), et $L = 19$ la largeur du terrain. Chaque ligne porte un
+**motif de blocs** de longueurs variées ; tout le motif subit le même décalage, donc les
+autres obstacles s'en déduisent. **Aucune simulation n'est déroulée** pour connaître l'état
+à $t+15$ : c'est un calcul direct.
 
 L'occupation d'une ligne est de plus **mémoïsée** : elle est périodique de période exacte
 $période \times L$ ticks, la clé de cache `(y, tick mod cycle)` garantit donc une mémoire
@@ -206,22 +208,21 @@ uv run python main.py --mode train --generations 60   # produit models/best.npz
 uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 ```
 
-Résultats observés (25 graines, tous les tableaux détaillés dans
+Résultats observés (25 graines, monde enrichi ; tableaux détaillés dans
 [ROBOTS.md](ROBOTS.md)) : en monde déterministe, les planificateurs exacts `search` et
-`guided` gagnent **toutes** leurs parties, le MCTS environ la moitié pour un coût ~50
-fois supérieur. Côté apprentissage, avec des réseaux musclés et un entraînement long, le
-**DQN décolle nettement** (33 de moyenne, record 130 lignes — il traverse vraiment des
-rivières), le PPO double (11), tandis que la neuroévolution et l'imitation restent basses.
-Le plafond initial des IA tenait donc surtout à un sous-entraînement, pas à une limite de
+`guided` gagnent **toutes** leurs parties, le MCTS environ la moitié pour un coût ~50 fois
+supérieur. Côté apprentissage, avec des réseaux musclés et un entraînement long, le **DQN
+est la seule IA à décoller** (17 de moyenne, record 42 — il traverse vraiment des
+rivières ; il atteignait même 33 sur le monde plus simple d'avant), les autres restant
+basses. Le plafond initial des IA tenait donc à un sous-entraînement, pas à une limite de
 principe — mais elles restent loin des 200 de la planification exacte.
 
 En monde **stochastique** (`--noise 0.1`), les planificateurs s'effondrent (`search`
-200 → 52, 0 victoire) et se retrouvent au coude-à-coude avec le MCTS (~50). Ils restent
-néanmoins **devant toutes les IA** (meilleur apprenant : DQN 25,6) : leur robustesse à ce
-type de perturbation est réelle. Contre-intuitivement, entraîner une IA *dans* le bruit
-ne l'aide pas — le signal d'apprentissage s'y dégrade plus qu'il ne forge une robustesse.
-Quand le futur est calculable, le calcul exact domine ; quand il ne l'est plus, tous
-souffrent, et les planificateurs restent en tête.
+200 → 28) : le futur qu'ils calculaient n'est plus fiable. Surtout, **l'écart avec les IA
+fond d'un facteur 12 à ~2** (search 28 contre DQN 14) — quand le futur n'est plus
+calculable, l'apprentissage redevient un concurrent sérieux de la planification. Les IA,
+elles, ne bronchent pas au changement de régime. Quand le futur est calculable, le calcul
+exact domine largement ; quand il ne l'est plus, l'écart se referme.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.

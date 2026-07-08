@@ -35,15 +35,18 @@ projet est là : *quand le futur est calculable, que vaut l'apprentissage face a
 - **Les bords sont des murs.** On ne peut pas sortir par la gauche ou la droite, et **on
   ne réapparaît jamais de l'autre côté** (pas de téléportation façon Snake). Un déplacement
   volontaire vers un bord est simplement bloqué.
-- **Route :** être sur la case d'une voiture = mort.
-- **Rivière :** il faut être sur un tronc, sinon noyade. Le tronc **porte** le joueur
-  horizontalement au tick suivant. **S'il vous porte hors de l'écran, vous mourez
-  immédiatement** — aucune action ne vous rattrape ce tick-là. Il faut sauter avant.
-- **Trottoir :** sûr, mais des arbres bloquent certaines cases.
-- **Espacements constants.** Sur une même ligne, l'écart entre les véhicules (ou les
-  troncs) est toujours le même (6 ou 12 cases) et le défilement est régulier. C'est ce qui
-  rend le futur *anticipable* : un robot peut calculer où sera chaque obstacle, une IA peut
-  apprendre le rythme.
+- **Route :** être sur la case d'un véhicule = mort. Les **voitures occupent 2 cases**, les
+  **camions 3**, de longueurs mélangées sur une même ligne, séparés par des trous.
+- **Rivière :** il faut être sur un tronc, sinon noyade. Les **troncs font 2 à 4 cases**,
+  de longueurs variées sur une même ligne. Le tronc **porte** le joueur horizontalement au
+  tick suivant ; **s'il vous porte hors de l'écran, vous mourez immédiatement** — aucune
+  action ne vous rattrape ce tick-là, il faut sauter avant.
+- **Trottoir :** sûr, mais des arbres bloquent certaines cases — **jamais plus de 2 collés**,
+  et il n'y a **qu'une seule ligne d'herbe à la fois**.
+- **Le motif défile en boucle.** Sur une ligne donnée, l'agencement des obstacles (leurs
+  positions et longueurs) est **fixe et se reproduit à l'identique** en glissant : c'est la
+  seule règle du défilement, et c'est elle qui rend le futur *anticipable*. Un robot peut
+  calculer où sera chaque obstacle à n'importe quel instant, une IA peut apprendre le rythme.
 
 ---
 
@@ -182,16 +185,29 @@ séparés, avantages estimés par GAE(λ), bonus d'entropie contre l'effondremen
 Mêmes 42 capteurs, même récompense dense que le DQN : les quatre signaux sont comparables
 à armes strictement égales.
 
-## `clone` — l'imitation du planificateur (distillation)
+## `clone` — copier le maître (imitation / distillation)
 
-L'idée la plus « recherche » du lot : `search` est un expert parfait — peut-on le
-**distiller** dans un réflexe ? On rejoue des parties de l'expert, on enregistre
-(capteurs, coup choisi) à chaque tick, et on entraîne une politique par entropie croisée
-à prédire le coup de l'expert. Le clone joue ensuite *sans aucune recherche* : ce que le
-planificateur calcule en explorant ~400 états, le clone le devine en un forward de
-réseau (~10 µs). La précision de prédiction et le score en jeu mesurent ce qui, dans la
-décision du planificateur, est « compressible » en réflexe — et ce qui exige
-irréductiblement du calcul.
+**Ce que `clone` n'est PAS.** Il ne mémorise aucune grille et ne compare pas la situation
+présente à des situations déjà vues. Aucune base de données, aucun « si je revois cette
+grille, je rejoue ce coup ». Ce serait impossible : il y a bien trop de grilles différentes.
+
+**Ce que `clone` EST.** Un réseau de neurones (le même genre que `nn`, `dqn`, `ppo`),
+entraîné à **imiter `search`** comme un élève copie un maître. La recette, en trois temps :
+
+1. On regarde `search` jouer des milliers de parties. À chaque tick, on note une fiche :
+   « voilà ce que les 42 capteurs voyaient → voilà le coup que `search` a joué ».
+2. On entraîne le réseau sur ces dizaines de milliers de fiches à **prédire le coup du
+   maître à partir des seuls capteurs** (apprentissage supervisé, entropie croisée).
+3. Une fois entraîné, le réseau **généralise** : face à une situation *nouvelle* (jamais
+   dans les fiches), il propose le coup que `search` aurait probablement joué — en un seul
+   calcul de réseau (~10 µs), **sans aucune recherche**.
+
+L'intérêt scientifique : `search` explore ~400 états par décision ; le clone tente de
+compresser tout ce raisonnement en un réflexe instantané. Sa précision (il rejoue ~78 % des
+coups du maître) et son score en jeu mesurent la part de la décision de `search` qui est
+« compressible » en réflexe — et la part qui exige irréductiblement de calculer. Réponse :
+il imite bien coup par coup mais reste faible en jeu (~6 lignes), car une seule erreur
+devant une rivière est fatale, et le réflexe ne rattrape pas comme le fait la recherche.
 
 ---
 
@@ -246,49 +262,39 @@ générations) :
 
 | Agent | Famille | Score moyen | Médiane | Record | Victoires | ms/décision |
 |---|---|---:|---:|---:|---:|---:|
-| `heuristic` | robot | 63,6 | 53 | 167 | 0/25 | 0,003 |
-| `search` | robot | **200** | 200 | 200 | **25/25** | 0,32 |
-| `mcts` | robot | 159,2 | 200 | 200 | 14/25 | 14,0 |
-| `nn` | IA | 5,9 | 4 | 13 | 0/25 | 0,29 |
-| `dqn` | IA | **33,0** | 25 | **130** | 0/25 | 0,10 |
-| `ppo` | IA | 11,0 | 7 | 31 | 0/25 | 0,27 |
-| `clone` | IA | 6,4 | 6 | 16 | 0/25 | 0,30 |
-| `guided` | hybride | **200** | 200 | 200 | **25/25** | 0,83 |
-
-Mesure dédiée guided vs search (15 graines) : 113,9 nœuds/coup contre 112,5, soit
-**+1,2 % de nœuds** et un temps de décision plus que doublé (l'IA est interrogée en plus) —
-l'aide de l'IA fait explorer *plus*, pas moins.
+| `heuristic` | robot | 97,2 | 71 | 200 | 4/25 | 0,005 |
+| `search` | robot | **200** | 200 | 200 | **25/25** | 0,29 |
+| `mcts` | robot | 129,8 | 200 | 200 | 14/25 | 14,0 |
+| `nn` | IA | 3,8 | 3 | 8 | 0/25 | 0,13 |
+| `dqn` | IA | **16,9** | 16 | **42** | 0/25 | 0,15 |
+| `ppo` | IA | 5,9 | 5 | 10 | 0/25 | 0,35 |
+| `clone` | IA | 9,1 | 8 | 28 | 0/25 | 0,35 |
+| `guided` | hybride | **200** | 200 | 200 | **25/25** | 0,79 |
 
 Lecture — quatre enseignements :
 
-1. **Dans un monde prévisible, la planification écrase l'apprentissage.** Même le MCTS,
-   planificateur *approximatif*, gagne 14 parties sur 25 — loin devant toutes les IA —
-   tout en étant ~50 fois plus coûteux que `search` pour un résultat inférieur :
-   l'échantillonnage n'apporte rien quand le futur se calcule exactement.
+1. **Dans un monde prévisible, la planification écrase l'apprentissage.** `search` et
+   `guided` gagnent tout ; même le MCTS, planificateur *approximatif*, gagne 14/25 — loin
+   devant toutes les IA — tout en étant ~50 fois plus coûteux que `search` pour un résultat
+   inférieur. L'échantillonnage n'apporte rien quand le futur se calcule exactement.
 
-2. **Le plafond des IA était surtout un manque d'entraînement — pas une fatalité.** Une
-   première version (petits réseaux, entraînements courts) plafonnait toutes les IA à
-   ~5-8 lignes. En musclant la capacité (dqn/ppo 64 neurones) et en allongeant fortement
-   l'entraînement (dqn ×5, ppo ×7), **le DQN bondit à 33 de moyenne, avec un record à 130
-   lignes** : il traverse donc vraiment des rivières, ce qu'aucune IA ne faisait avant. Le
-   PPO double (11). Mais tout dépend de la *méthode* : les apprenants par **gradient**
-   (dqn, ppo) adorent la capacité et les données ; l'**évolution** (nn) n'en profite pas
-   (elle a même légèrement régressé, 8,1 → 5,9 : plus de poids = espace à explorer plus
-   grand pour une sélection aveugle) ; et l'**imitation** (clone) reste plafonnée par la
-   qualité irréductible d'un simple réflexe. Conclusion nuancée : le réflexe local peut
-   aller bien plus loin qu'on ne croyait avec assez de gradient et de temps, mais il reste
-   loin des 200 de la planification exacte.
+2. **Surprise du monde enrichi : l'heuristique (T+1) grimpe à 97, avec 4 victoires.** Avec
+   des trous plus larges entre véhicules, un agent qui ne regarde qu'un coup traverse les
+   routes bien plus facilement ; ce sont désormais surtout les rivières (qui exigent de
+   planifier) qui l'arrêtent. Un monde plus riche n'est pas forcément plus dur pour tous.
 
-3. **`guided` : le résultat négatif propre.** Qualité identique à `search` (25/25), mais
-   aucune économie de nœuds (+1,2 %) pour un coût plus que doublé (l'IA est interrogée à
-   chaque nœud proche de la racine). La borne admissible f et la mémoïzation éliminent
-   déjà l'essentiel du travail ; il ne reste rien à guider. AlphaZero guide un MCTS
-   précisément parce que Go et échecs n'offrent aucune borne exploitable — ici elle
-   existe, et elle est plus forte qu'un conseil appris.
+3. **Le DQN reste le seul apprenant qui décolle** (16,9, record 42) — il traverse
+   réellement des rivières, là où `nn` (3,8), `ppo` (5,9) et `clone` (9,1) stagnent. La
+   leçon des essais précédents tient : les apprenants par **gradient** profitent de la
+   capacité et de l'entraînement long (le DQN atteignait même 33 sur le monde plus simple
+   d'avant), l'**évolution** (nn) n'en profite pas, l'**imitation** (clone) plafonne au
+   niveau du réflexe. « Inutile » est devenu « joueur honnête » — mais loin des 200 exacts.
 
-4. **La hiérarchie des robots est une hiérarchie d'horizon** : T+1 (heuristic, 63,6) <
-   rollouts aléatoires (mcts, 159,2) < T+15 exact (search, 200). À budget de 20 ms, la
-   profondeur d'anticipation exacte est la seule monnaie qui compte.
+4. **La hiérarchie reste une hiérarchie d'horizon** : T+1 (heuristic, 97) < rollouts
+   aléatoires (mcts, 130) < T+15 exact (search, 200). Plus on anticipe loin et juste, plus
+   on va loin ; `guided` confirme le résultat négatif (même qualité que `search` pour ~+1 %
+   de nœuds et un coût doublé — il ne reste rien à guider quand la recherche est déjà si
+   efficace).
 
 ---
 
@@ -307,43 +313,37 @@ Protocole : mêmes graines que le bench déterministe, bruit 0,1, mêmes modèle
 Résultats (bruit 0,1, mêmes 25 graines) — à comparer colonne à colonne avec le tableau
 déterministe ci-dessus :
 
-Sous bruit 0,1 (mêmes 25 graines). Les IA suivies d'une `*` ont été **entraînées
-directement en monde bruité** ; les autres sont les mêmes modèles qu'en déterministe.
+Sous bruit 0,1 (mêmes 25 graines, mêmes modèles qu'en déterministe) :
 
 | Agent | Famille | Score moyen (dét. → bruité) | Médiane | Record | Victoires |
 |---|---|---:|---:|---:|---:|
-| `heuristic` | robot | 63,6 → 24,9 | 14 | 79 | 0/25 |
-| `search` | robot | **200 → 52,2** | 41 | 181 | 0/25 |
-| `mcts` | robot | 159,2 → 50,1 | 38 | 200 | 1/25 |
-| `guided` | hybride | 200 → 49,3 | 39 | 142 | 0/25 |
-| `dqn` | IA | 33,0 → **25,6** | 19 | 128 | 0/25 |
-| `ppo` | IA | 11,0 → 9,1 | 8 | 27 | 0/25 |
-| `nn` | IA | 5,9 → 5,9 | 4 | 21 | 0/25 |
-| `dqn*` | IA (bruité) | — → 16,0 | 13 | 55 | 0/25 |
-| `ppo*` | IA (bruité) | — → 9,0 | 8 | 45 | 0/25 |
-| `nn*` | IA (bruité) | — → 6,1 | 6 | 17 | 0/25 |
+| `heuristic` | robot | 97,2 → 16,3 | 12 | 48 | 0/25 |
+| `search` | robot | **200 → 28,2** | 23 | 65 | 0/25 |
+| `guided` | hybride | 200 → 25,8 | 21 | 58 | 0/25 |
+| `mcts` | robot | 129,8 → 19,5 | 14 | 73 | 0/25 |
+| `dqn` | IA | 16,9 → **14,0** | 11 | 43 | 0/25 |
+| `clone` | IA | 9,1 → 7,5 | 7 | 17 | 0/25 |
+| `ppo` | IA | 5,9 → 5,8 | 6 | 11 | 0/25 |
+| `nn` | IA | 3,8 → 4,2 | 4 | 9 | 0/25 |
 
 Trois enseignements :
 
-1. **L'oracle brisé fait s'effondrer les planificateurs.** `search` perd 74 % de son score
-   (200 → 52) et toutes ses victoires ; `guided` de même (200 → 49). Leurs plans à 15 coups
-   sont démentis par les turbulences. Le jeu bruité est bien plus dur pour tous, et search,
-   mcts et guided finissent au coude à coude (~50) : sous incertitude, calculer juste et
-   échantillonner se valent (l'avantage du MCTS varie d'un run à l'autre, son budget étant
-   mesuré au chrono).
+1. **L'oracle brisé fait s'effondrer les planificateurs.** `search` perd 86 % de son score
+   (200 → 28), `guided` de même (→ 26) ; leurs plans à 15 coups sont démentis par les
+   turbulences. Cette fois le MCTS ne prend PAS l'avantage (19,5 < 28,2) — sa « revanche »
+   observée sur le monde précédent tenait surtout à la variance de son budget au chrono.
 
-2. **Mais même bridés, les planificateurs restent devant toutes les IA.** Le meilleur
-   apprenant sous bruit, le DQN musclé, atteint 25,6 — la moitié des ~50 des robots. La
-   robustesse de la planification à ce type de perturbation est plus grande qu'on ne le
-   croit : perdre la moitié de son score en restant en tête, c'est une belle résistance.
+2. **Sous bruit, l'écart planificateurs/IA fond spectaculairement.** En déterministe, le
+   meilleur robot (200) écrasait la meilleure IA (dqn 17) d'un facteur 12. Sous bruit, ce
+   facteur tombe à **~2** : `search` 28, `mcts` 19,5, et `dqn` 14 juste derrière. Autrement
+   dit, **quand le futur n'est plus calculable, le DQN devient un concurrent sérieux des
+   planificateurs** — c'est le régime où l'apprentissage a le plus de valeur relative.
 
-3. **Entraîner l'IA DANS le bruit n'aide pas — au contraire (résultat honnête).** On
-   pouvait croire qu'un DQN entraîné en monde bruité y serait meilleur. Faux : `dqn*`
-   (16,0) fait *moins bien* que le `dqn` entraîné en monde propre puis lâché dans le bruit
-   (25,6). Le bruit pendant l'entraînement dégrade le signal d'apprentissage (gradients
-   plus bruités) plus qu'il ne forge une robustesse ; les compétences de traversée apprises
-   au propre se transfèrent mieux. La piste « entraîner dans le bruit » est donc explorée
-   et invalidée ici.
+3. **Les IA sont imperturbables au changement de régime** (dqn 16,9 → 14,0 ; nn 3,8 → 4,2 ;
+   ppo 5,9 → 5,8), alors qu'elles ont été entraînées en monde propre. Leurs réflexes
+   statistiques n'ont jamais reposé sur la précision du futur. (Sur le monde précédent on
+   avait aussi testé un entraînement *dans* le bruit : il n'aidait pas — le bruit dégrade
+   le signal d'apprentissage plus qu'il ne forge une robustesse.)
 
 # Reproduire les expériences
 
@@ -366,13 +366,17 @@ séquentiel) ; le bruit du monde (`--noise`) s'applique aussi à l'entraînement
 
 # Pistes restantes (non implémentées)
 
-1. **Politique à mémoire** (réseau récurrent ou pile d'observations) — le plafond des IA
-   réactives vient peut-être de l'absence d'état interne : impossible de « compter »
-   l'attente devant une rivière. Le DQN à 33 (record 130) montre qu'il reste de la marge.
-2. **Planification robuste au bruit** — expectimax borné ou replanification avec marge de
-   sécurité (éviter les cases adjacentes aux voitures) : rendre aux robots une avance nette
-   en monde stochastique plutôt que le coude-à-coude actuel.
-3. **Entraînement bien plus long / réglage fin du DQN** — il progressait encore ; pousser
-   au-delà de 4000 épisodes et ajuster récompense/exploration pourrait le rapprocher des
-   robots en monde déterministe.
-4. **Tournoi complet** — matrice duel de tous les agents sur N graines, classement Elo.
+1. **Lignes de nénuphars** (rivière à plateformes fixes) — des nénuphars statiques, isolés,
+   3-4 par ligne, sur lesquels sauter comme des pierres de gué immobiles. Faisable dans le
+   cadre actuel (ligne RIVER à motif fixe, direction 0) ; le point délicat est de garantir
+   la traversée à la génération.
+2. **Lignes de train** — des rails où un train traverse périodiquement et **bloque toute la
+   ligne** deux ticks, avec un signal d'alerte quelques coups à l'avance (la phase des
+   capteurs le donnerait déjà). Thématiquement fidèle mais plus lourd à rendre et à équilibrer.
+3. **Politique à mémoire** (réseau récurrent ou pile d'observations) — le plafond des IA
+   réactives vient peut-être de l'absence d'état interne. Le DQN à 33 (record 130) montre
+   qu'il reste de la marge.
+4. **Planification robuste au bruit** — expectimax borné ou marges de sécurité, pour rendre
+   aux robots une avance nette en monde stochastique plutôt que le coude-à-coude actuel.
+5. **Entraînement bien plus long du DQN** — il progressait encore à 4000 épisodes.
+6. **Tournoi complet** — matrice duel de tous les agents, classement Elo.
