@@ -56,10 +56,14 @@ SEARCH_MAX_HORIZON: Final[int] = 90          # plafond de l'horizon adaptatif (s
 SEARCH_HORIZON_STEP: Final[int] = 15         # incrément d'élargissement de l'horizon
 AI_TIME_BUDGET_MS: Final[float] = 20.0       # budget de décision par tick
 
-# --- Neuroévolution ---
+# --- Capteurs des agents apprenants ---
 NN_SENSOR_ROWS: Final[tuple[int, ...]] = (-1, 0, 1, 2, 3)      # lignes perçues (relatives à Y)
 NN_FEATURES_PER_ROW: Final[int] = 6          # dist. gauche/droite + one-hot type (3) + vitesse signée
-NN_INPUT_SIZE: Final[int] = len(NN_SENSOR_ROWS) * NN_FEATURES_PER_ROW + 2  # + X normalisé + flag tronc
+PHASE_LOOKAHEAD: Final[int] = 57             # horizon des capteurs de phase (cycle max = 3 x 19)
+# base (6/ligne + X + flag tronc) + phase (tto/ttf par ligne)
+NN_INPUT_SIZE: Final[int] = len(NN_SENSOR_ROWS) * (NN_FEATURES_PER_ROW + 2) + 2
+
+# --- Neuroévolution ---
 NN_HIDDEN_SIZE: Final[int] = 16
 NN_OUTPUT_SIZE: Final[int] = len(ACTIONS)
 POPULATION_SIZE: Final[int] = 100
@@ -72,6 +76,43 @@ EPISODES_PER_EVAL: Final[int] = 3
 VALIDATION_SEEDS: Final[tuple[int, ...]] = (9001, 9002, 9003, 9004, 9005)
 DEFAULT_GENERATIONS: Final[int] = 60
 MODEL_PATH: Final[str] = "models/best.npz"
+FITNESS_SURVIVAL_BONUS: Final[float] = 0.005  # shaping : bonus/tick survécu (<< 1 ligne)
+TRAIN_TEMPERATURE: Final[float] = 0.5         # softmax d'exploration à l'entraînement
+CURRICULUM_FRACTION: Final[float] = 0.4       # part des générations sur mondes sans rivière
+CURRICULUM_WEIGHTS: Final[dict[int, float]] = {SAFE: 0.35, ROAD: 0.65, RIVER: 0.0}
+
+# --- DQN ---
+DQN_HIDDEN_SIZE: Final[int] = 32
+DQN_LR: Final[float] = 1e-3
+DQN_GAMMA: Final[float] = 0.97
+DQN_EPS_START: Final[float] = 1.0
+DQN_EPS_END: Final[float] = 0.05
+DQN_EPS_DECAY: Final[float] = 0.995           # décroissance par épisode
+DQN_BUFFER_SIZE: Final[int] = 50_000
+DQN_BATCH_SIZE: Final[int] = 64
+DQN_TRAIN_EVERY: Final[int] = 2               # 1 mise à jour tous les 2 pas
+DQN_TARGET_SYNC: Final[int] = 500             # synchronisation du réseau cible (pas)
+DQN_EPISODES: Final[int] = 800
+DQN_MODEL_PATH: Final[str] = "models/dqn.npz"
+REWARD_PROGRESS: Final[float] = 1.0           # nouvelle ligne max franchie
+REWARD_STEP: Final[float] = -0.01             # coût du temps
+REWARD_DEATH: Final[float] = -1.0
+REWARD_WIN: Final[float] = 5.0
+
+# --- MCTS (robot) ---
+MCTS_BUDGET_MS: Final[float] = 15.0
+MCTS_UCT_C: Final[float] = 1.2
+MCTS_ROLLOUT_DEPTH: Final[int] = 25
+MCTS_FORWARD_BIAS: Final[float] = 0.5         # proba d'essayer AVANCER d'abord en rollout
+
+# --- Imitation (clone du planificateur) + recherche guidée ---
+POLICY_MODEL_PATH: Final[str] = "models/policy.npz"
+POLICY_HIDDEN_SIZE: Final[int] = 32
+IMITATION_SAMPLES: Final[int] = 60_000
+IMITATION_EPOCHS: Final[int] = 12
+IMITATION_LR: Final[float] = 1e-3
+IMITATION_BATCH: Final[int] = 128
+GUIDED_PRIOR_DEPTH: Final[int] = 2            # profondeur max où le prior guide le tri
 
 # --- UI ---
 CELL_SIZE: Final[int] = 28
