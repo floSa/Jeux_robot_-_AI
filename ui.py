@@ -89,12 +89,13 @@ class Renderer:
         if engine.won:
             titre, col = "GAGNÉ !", COL_WON
         else:
-            titre, col = "MORT", COL_DEAD
+            cause = f" ({engine.death_cause})" if engine.death_cause else ""
+            titre, col = f"MORT{cause}", COL_DEAD
         band_h = 120
         band = pygame.Surface((self.game_width, band_h), pygame.SRCALPHA)
         band.fill((0, 0, 0, 200))
         self.screen.blit(band, (0, (self.height - band_h) // 2))
-        self._center(titre, self.font_huge, col, dy=-18)
+        self._center(titre, self.font_huge if engine.won else self.font_big, col, dy=-18)
         self._center(f"score {engine.score} / {TARGET_SCORE}", self.font_big, COL_TEXT, dy=22)
         self._center("appuie sur une touche ou ferme la fenêtre", self.font, COL_TEXT_DIM, dy=48)
         pygame.display.flip()

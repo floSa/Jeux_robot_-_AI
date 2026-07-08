@@ -89,6 +89,7 @@ class Engine:
         self.score = 0
         self.alive = True
         self.won = False
+        self.death_cause: str | None = None
         self.ticks_since_progress = 0
         self.lines: list[Line] = []
         self.trees: set[tuple[int, int]] = set()
@@ -224,6 +225,8 @@ class Engine:
         x, y, alive = self.next_state(self.player_x, self.player_y, self.tick, action)
         self.tick += 1
         self.player_x, self.player_y, self.alive = x, y, alive
+        if not alive:
+            self.death_cause = "noyade" if self.line_at(y).kind == RIVER else "collision"
         if y > self.score:
             self.score = y
             self.ticks_since_progress = 0
@@ -231,8 +234,13 @@ class Engine:
             self.ticks_since_progress += 1
         if self.score >= TARGET_SCORE:
             self.won = True
-        elif self.ticks_since_progress > STAGNATION_LIMIT or self.tick >= MAX_TICKS:
+        elif self.alive and (
+            self.ticks_since_progress > STAGNATION_LIMIT or self.tick >= MAX_TICKS
+        ):
             self.alive = False
+            self.death_cause = (
+                "stagnation" if self.tick < MAX_TICKS else "limite de ticks"
+            )
         return self.alive
 
     # ------------------------------------------------------------------ divers
@@ -255,6 +263,7 @@ class Engine:
         other.score = self.score
         other.alive = self.alive
         other.won = self.won
+        other.death_cause = self.death_cause
         other.ticks_since_progress = self.ticks_since_progress
         other.lines = list(self.lines)
         other.trees = set(self.trees)
