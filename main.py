@@ -113,7 +113,7 @@ def cmd_train(args: argparse.Namespace) -> None:
         population_size=args.population, episodes=args.episodes, seed=args.seed
     )
     t0 = time.perf_counter()
-    best, fitness = trainer.evolve(args.generations)
+    best, fitness = trainer.evolve(args.generations, curriculum=args.curriculum)
     elapsed = time.perf_counter() - t0
     save_genome(best, args.model)
     print(
@@ -131,8 +131,8 @@ def cmd_bench(args: argparse.Namespace) -> None:
         print(f"(nn ignorée : modèle {args.model} absent)")
 
     seeds = [10_000 + i for i in range(args.episodes)]
-    print(f"{'IA':<10} {'score moy':>10} {'médiane':>8} {'max':>5} {'victoires':>10} "
-          f"{'ms moy':>8} {'ms max':>8}")
+    print(f"{'agent':<10} {'famille':<8} {'score moy':>10} {'médiane':>8} {'max':>5} "
+          f"{'victoires':>10} {'ms moy':>8} {'ms max':>8}")
     for ai in ais:
         scores: list[int] = []
         wins = 0
@@ -146,7 +146,7 @@ def cmd_bench(args: argparse.Namespace) -> None:
             avg_ms.append(result["avg_ms"])
             max_ms = max(max_ms, result["max_ms"])
         print(
-            f"{ai.name:<10} {statistics.mean(scores):>10.1f} "
+            f"{ai.name:<10} {ai.family:<8} {statistics.mean(scores):>10.1f} "
             f"{statistics.median(scores):>8.0f} {max(scores):>5} "
             f"{wins:>5}/{len(seeds):<4} {statistics.mean(avg_ms):>8.3f} {max_ms:>8.2f}"
         )
@@ -169,6 +169,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=MODEL_PATH, help="chemin du modèle .npz")
     parser.add_argument("--generations", type=int, default=DEFAULT_GENERATIONS,
                         help="générations du GA (mode train)")
+    parser.add_argument("--curriculum", action="store_true",
+                        help="GA : commencer sur des mondes sans rivière")
     parser.add_argument("--population", type=int, default=POPULATION_SIZE,
                         help="taille de population du GA (mode train)")
     parser.add_argument("--episodes", type=int, default=None,

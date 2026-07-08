@@ -16,126 +16,51 @@ from config import (
     ACTIONS,
     Action,
     CROSSOVER_RATE,
+    CURRICULUM_FRACTION,
+    CURRICULUM_WEIGHTS,
     ELITE_COUNT,
     EPISODES_PER_EVAL,
-    GRID_WIDTH,
+    FITNESS_SURVIVAL_BONUS,
     MODEL_PATH,
     MUTATION_RATE,
     MUTATION_SIGMA,
     NN_HIDDEN_SIZE,
     NN_INPUT_SIZE,
     NN_OUTPUT_SIZE,
-    NN_SENSOR_ROWS,
     POPULATION_SIZE,
-    RIVER,
-    ROAD,
-    SAFE,
     TOURNAMENT_SIZE,
+    TRAIN_TEMPERATURE,
     VALIDATION_SEEDS,
 )
 from engine import Engine
 from ai_base import BaseAI
+from neural import MLP, Layout, genome_size, random_flat, softmax
+from sensors import sense_full as sense
 
-# --- Découpage du génome ---
-_W1 = NN_INPUT_SIZE * NN_HIDDEN_SIZE
-_B1 = NN_HIDDEN_SIZE
-_W2 = NN_HIDDEN_SIZE * NN_OUTPUT_SIZE
-_B2 = NN_OUTPUT_SIZE
-GENOME_SIZE = _W1 + _B1 + _W2 + _B2
-
-
-# ------------------------------------------------------------------- capteurs
-
-def _scan(x: int, occ: frozenset[int], step: int) -> float:
-    """Distance normalisée au premier obstacle dans une direction (1.0 = aucun).
-
-    Balayage circulaire (modulo), cohérent avec la topologie du monde.
-    """
-    for d in range(1, GRID_WIDTH):
-        if (x + step * d) % GRID_WIDTH in occ:
-            return d / GRID_WIDTH
-    return 1.0
-
-
-def sense(engine: Engine) -> np.ndarray:
-    """Vecteur d'entrée du réseau (taille NN_INPUT_SIZE).
-
-    Par ligne relative (-1, 0, +1, +2, +3) : distance gauche/droite au premier
-    obstacle (voiture, tronc ou arbre selon le type), one-hot du type, vitesse
-    signée. Puis X normalisé dans [-1, 1] et flag «sur un tronc».
-    """
-    x, y, tick = engine.player_x, engine.player_y, engine.tick
-    features: list[float] = []
-    for dy in NN_SENSOR_ROWS:
-        ly = y + dy
-        if ly < 0:
-            features.extend((0.0, 0.0, 1.0, 0.0, 0.0, 0.0))  # bord bas = mur sûr
-            continue
-        line = engine.line_at(ly)
-        occ = (
-            engine.tree_columns(ly)
-            if line.kind == SAFE
-            else engine.occupied_columns(ly, tick)
-        )
-        features.append(_scan(x, occ, -1))
-        features.append(_scan(x, occ, +1))
-        features.append(1.0 if line.kind == SAFE else 0.0)
-        features.append(1.0 if line.kind == ROAD else 0.0)
-        features.append(1.0 if line.kind == RIVER else 0.0)
-        features.append(line.direction / line.period)
-    features.append(x / (GRID_WIDTH - 1) * 2.0 - 1.0)
-    on_log = (
-        engine.line_at(y).kind == RIVER and x in engine.occupied_columns(y, tick)
-    )
-    features.append(1.0 if on_log else 0.0)
-    return np.asarray(features, dtype=np.float64)
-
-
-# --------------------------------------------------------------------- réseau
-
-class NeuralNet:
-    """Perceptron multicouche : entrée -> cachée (16, tanh) -> 5 logits."""
-
-    def __init__(self, genome: np.ndarray) -> None:
-        g = np.asarray(genome, dtype=np.float64)
-        if g.size != GENOME_SIZE:
-            raise ValueError(f"génome de taille {g.size}, attendu {GENOME_SIZE}")
-        i = 0
-        self.w1 = g[i : i + _W1].reshape(NN_INPUT_SIZE, NN_HIDDEN_SIZE)
-        i += _W1
-        self.b1 = g[i : i + _B1]
-        i += _B1
-        self.w2 = g[i : i + _W2].reshape(NN_HIDDEN_SIZE, NN_OUTPUT_SIZE)
-        i += _W2
-        self.b2 = g[i : i + _B2]
-        self.genome = g
-
-    def forward(self, inputs: np.ndarray) -> np.ndarray:
-        hidden = np.tanh(inputs @ self.w1 + self.b1)
-        return hidden @ self.w2 + self.b2
-
-
-def random_genome(rng: np.random.Generator) -> np.ndarray:
-    """Initialisation par couche en 1/sqrt(fan_in) (régime non saturé du tanh)."""
-    w1 = rng.normal(0.0, 1.0 / np.sqrt(NN_INPUT_SIZE), _W1)
-    b1 = np.zeros(_B1)
-    w2 = rng.normal(0.0, 1.0 / np.sqrt(NN_HIDDEN_SIZE), _W2)
-    b2 = np.zeros(_B2)
-    return np.concatenate((w1, b1, w2, b2))
+LAYOUT: Layout = (NN_INPUT_SIZE, NN_HIDDEN_SIZE, NN_OUTPUT_SIZE)
+GENOME_SIZE = genome_size(LAYOUT)
 
 
 class NeuralAI(BaseAI):
-    """IA pilotée par le réseau : action = argmax des logits sur les capteurs."""
+    """IA pilotée par le réseau : argmax des logits, ou softmax à température.
+
+    temperature = 0 : politique déterministe (évaluation, bench).
+    temperature > 0 : échantillonnage softmax (exploration à l'entraînement,
+    évite les boucles comportementales des politiques argmax figées).
+    """
 
     name = "nn"
+    family = "ia"
 
-    def __init__(self, net: NeuralNet) -> None:
+    def __init__(self, net: MLP, temperature: float = 0.0, seed: int = 0) -> None:
         super().__init__()
         self.net = net
+        self.temperature = temperature
+        self.rng = np.random.default_rng(seed)
 
     @classmethod
-    def from_genome(cls, genome: np.ndarray) -> "NeuralAI":
-        return cls(NeuralNet(genome))
+    def from_genome(cls, genome: np.ndarray, **kwargs: float) -> "NeuralAI":
+        return cls(MLP(LAYOUT, flat=np.asarray(genome)), **kwargs)
 
     @classmethod
     def from_file(cls, path: str = MODEL_PATH) -> "NeuralAI":
@@ -143,6 +68,9 @@ class NeuralAI(BaseAI):
 
     def get_move(self, game_state: Engine) -> Action:
         logits = self.net.forward(sense(game_state))
+        if self.temperature > 0.0:
+            probs = softmax(logits / self.temperature)
+            return ACTIONS[int(self.rng.choice(len(ACTIONS), p=probs))]
         return ACTIONS[int(np.argmax(logits))]
 
 
@@ -178,7 +106,7 @@ class GeneticTrainer:
         self.rng = np.random.default_rng(seed)
         self.episodes = episodes
         self.population: list[np.ndarray] = [
-            random_genome(self.rng) for _ in range(population_size)
+            random_flat(LAYOUT, self.rng) for _ in range(population_size)
         ]
         self.best_genome: np.ndarray = self.population[0].copy()
         self.best_fitness: float = float("-inf")
@@ -186,16 +114,37 @@ class GeneticTrainer:
     # -- fitness ------------------------------------------------------------
 
     @staticmethod
-    def run_episode(genome: np.ndarray, seed: int) -> int:
-        """Joue un épisode complet ; retourne le Y maximal atteint."""
-        ai = NeuralAI.from_genome(genome)
-        engine = Engine(seed=seed)
+    def run_episode(
+        genome: np.ndarray,
+        seed: int,
+        temperature: float = 0.0,
+        line_weights: dict[int, float] | None = None,
+    ) -> tuple[int, int]:
+        """Joue un épisode complet ; retourne (Y maximal, ticks survécus)."""
+        ai = NeuralAI.from_genome(genome, temperature=temperature, seed=seed)
+        engine = Engine(seed=seed, line_weights=line_weights)
         while not engine.game_over:
             engine.step(ai.get_move(engine))
-        return engine.score
+        return engine.score, engine.tick
 
-    def fitness(self, genome: np.ndarray, seeds: tuple[int, ...]) -> float:
-        return float(np.mean([self.run_episode(genome, s) for s in seeds]))
+    def fitness(
+        self,
+        genome: np.ndarray,
+        seeds: tuple[int, ...],
+        temperature: float = 0.0,
+        line_weights: dict[int, float] | None = None,
+        shaped: bool = True,
+    ) -> float:
+        """Fitness = Y max + bonus de survie (shaping), moyennée sur les graines.
+
+        Le bonus (0,005/tick) reste très inférieur à une ligne franchie : il
+        densifie le signal en début d'évolution sans récompenser le camping.
+        """
+        total = 0.0
+        for s in seeds:
+            score, ticks = self.run_episode(genome, s, temperature, line_weights)
+            total += score + (FITNESS_SURVIVAL_BONUS * ticks if shaped else 0.0)
+        return total / len(seeds)
 
     # -- opérateurs génétiques ----------------------------------------------
 
@@ -222,21 +171,38 @@ class GeneticTrainer:
         self,
         generations: int,
         log: Callable[[str], None] = print,
+        curriculum: bool = False,
     ) -> tuple[np.ndarray, float]:
-        """Fait évoluer la population ; retourne (meilleur génome, fitness validée)."""
+        """Fait évoluer la population ; retourne (meilleur génome, score validé).
+
+        curriculum=True : les premières générations (CURRICULUM_FRACTION)
+        s'entraînent sur des mondes sans rivière (routes seules), puis mixtes.
+        L'entraînement échantillonne en softmax (TRAIN_TEMPERATURE) ; la
+        validation est toujours en argmax, mondes complets, score brut.
+        """
+        cutoff = int(generations * CURRICULUM_FRACTION) if curriculum else 0
         for gen in range(generations):
+            weights = CURRICULUM_WEIGHTS if gen < cutoff else None
             seeds = tuple(int(s) for s in self.rng.integers(0, 100_000, self.episodes))
-            fits = np.array([self.fitness(g, seeds) for g in self.population])
+            fits = np.array(
+                [
+                    self.fitness(g, seeds, TRAIN_TEMPERATURE, weights)
+                    for g in self.population
+                ]
+            )
             order = np.argsort(fits)[::-1]
             champion = self.population[order[0]]
 
-            val_fit = self.fitness(champion, VALIDATION_SEEDS)
+            val_fit = self.fitness(
+                champion, VALIDATION_SEEDS, temperature=0.0, shaped=False
+            )
             if val_fit > self.best_fitness:
                 self.best_fitness = val_fit
                 self.best_genome = champion.copy()
 
+            phase = "route" if gen < cutoff else "mixte"
             log(
-                f"gen {gen:3d} | fitness max {fits[order[0]]:6.1f} | "
+                f"gen {gen:3d} [{phase}] | fitness max {fits[order[0]]:6.1f} | "
                 f"moyenne {fits.mean():6.1f} | validation {val_fit:6.1f} | "
                 f"meilleur global {self.best_fitness:6.1f}"
             )

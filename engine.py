@@ -79,8 +79,9 @@ class Engine:
     peuvent donc projeter l'avenir via `next_state` sans muter l'état réel.
     """
 
-    def __init__(self, seed: int = 0) -> None:
+    def __init__(self, seed: int = 0, line_weights: dict[int, float] | None = None) -> None:
         self.seed = seed
+        self.line_weights = dict(line_weights or LINE_WEIGHTS)  # profil de génération
         self.rng = random.Random(seed)
         self.width = GRID_WIDTH
         self.tick = 0
@@ -109,8 +110,8 @@ class Engine:
         if y < START_SAFE_ROWS:
             self._consecutive_rivers = 0
             return Line(y=y, kind=SAFE)
-        kinds = list(LINE_WEIGHTS)
-        weights = [LINE_WEIGHTS[k] for k in kinds]
+        kinds = list(self.line_weights)
+        weights = [self.line_weights[k] for k in kinds]
         if self._consecutive_rivers >= MAX_CONSECUTIVE_RIVERS:
             weights[kinds.index(RIVER)] = 0.0
         kind = self.rng.choices(kinds, weights=weights)[0]
@@ -265,6 +266,7 @@ class Engine:
         ses valeurs sont déterministes et identiques pour tout clone."""
         other = object.__new__(Engine)
         other.seed = self.seed
+        other.line_weights = dict(self.line_weights)
         other.rng = random.Random()
         other.rng.setstate(self.rng.getstate())
         other.width = self.width
