@@ -52,6 +52,8 @@ STAGNATION_LIMIT: Final[int] = 120           # ticks sans nouveau Y max avant mo
 
 # --- IA ---
 SEARCH_HORIZON: Final[int] = 15              # profondeur de recherche T+15
+SEARCH_MAX_HORIZON: Final[int] = 90          # plafond de l'horizon adaptatif (search+)
+SEARCH_HORIZON_STEP: Final[int] = 15         # incrément d'élargissement de l'horizon
 AI_TIME_BUDGET_MS: Final[float] = 20.0       # budget de décision par tick
 
 # --- Neuroévolution ---

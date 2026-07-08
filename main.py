@@ -24,13 +24,13 @@ from config import (
 )
 from engine import Engine
 from ai_base import BaseAI, HeuristicAI
-from ai_search import SearchAI
+from ai_search import AdaptiveSearchAI, SearchAI
 from ai_genetic import GeneticTrainer, NeuralAI, save_genome
 
 if TYPE_CHECKING:
     from ui import Renderer
 
-AI_CHOICES = ("heuristic", "search", "nn")
+AI_CHOICES = ("heuristic", "search", "search+", "nn")
 
 
 def build_ai(name: str, model_path: str) -> BaseAI:
@@ -38,6 +38,8 @@ def build_ai(name: str, model_path: str) -> BaseAI:
         return HeuristicAI()
     if name == "search":
         return SearchAI()
+    if name == "search+":
+        return AdaptiveSearchAI()
     if name == "nn":
         if not os.path.exists(model_path):
             raise SystemExit(
@@ -89,7 +91,12 @@ def cmd_play(args: argparse.Namespace) -> None:
             renderer.wait_until_dismissed()
     finally:
         renderer.close()
-    verdict = "GAGNÉ" if engine.won else ("interrompu" if result["interrupted"] else "MORT")
+    if engine.won:
+        verdict = "GAGNÉ"
+    elif result["interrupted"]:
+        verdict = "interrompu"
+    else:
+        verdict = f"MORT ({engine.death_cause})" if engine.death_cause else "MORT"
     print(
         f"[{ai.name}] seed={args.seed} : {verdict} | score {engine.score}/{TARGET_SCORE} "
         f"| {engine.tick} ticks | décision moy {result['avg_ms']:.2f} ms "
@@ -117,7 +124,7 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 def cmd_bench(args: argparse.Namespace) -> None:
     """Protocole de comparaison : mêmes graines pour toutes les IA, sans affichage."""
-    ais: list[BaseAI] = [HeuristicAI(), SearchAI()]
+    ais: list[BaseAI] = [HeuristicAI(), SearchAI(), AdaptiveSearchAI()]
     if os.path.exists(args.model):
         ais.append(NeuralAI.from_file(args.model))
     else:
