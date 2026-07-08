@@ -5,15 +5,21 @@
 Copie fonctionnelle de Crossy Road sur grille, conçue pour faire s'affronter et se comparer
 plusieurs types d'intelligences artificielles sur un terrain identique :
 
-| IA | Famille | Horizon | Principe |
-|---|---|---|---|
-| `heuristic` | déterministe gloutonne | T+1 | priorités fixes + survie immédiate, préférence centre |
-| `search` | déterministe prédictive | T+15 | best-first élagué avec mémoization (type A*) |
-| `search+` | déterministe prédictive | T+15 → T+90 | horizon adaptatif sous budget temps |
-| `nn` | neuroévolution | réactif | MLP numpy entraîné par algorithme génétique |
+| Agent | Famille | Principe |
+|---|---|---|
+| `heuristic` | robot | glouton T+1, priorités fixes + préférence centre |
+| `search` | robot | best-first élagué T+15 avec mémoization (type A*) |
+| `search+` | robot | horizon adaptatif T+15 → T+90 sous budget temps |
+| `mcts` | robot | UCT mono-joueur, rollouts sous budget 15 ms |
+| `nn` | IA | MLP entraîné par neuroévolution (shaping, softmax, curriculum) |
+| `dqn` | IA | Q-learning profond, récompense dense, replay buffer |
+| `clone` | IA | imitation du planificateur (distillation de `search`) |
+| `guided` | hybride | recherche A* départagée par la politique apprise |
 
-Chaque robot est expliqué de façon vulgarisée (avec le tableau de l'explosion
-combinatoire et son remède) dans [ROBOTS.md](ROBOTS.md).
+**Robots** = algorithmes déterministes écrits à la main (ils calculent) ; **IA** =
+paramètres appris (évolution, gradient, imitation) ; **hybride** = planification guidée
+par apprentissage. Chaque agent est expliqué de façon vulgarisée dans
+[ROBOTS.md](ROBOTS.md), avec le tableau de l'explosion combinatoire et les résultats.
 
 Le but du projet est le **comparatif algorithme déterministe vs neuroévolution** : à monde
 strictement identique (mêmes graines aléatoires), quelle approche franchit le plus vite et le
@@ -28,16 +34,21 @@ décrites plus bas.
 
 ```
 Crossy_Road/
-├── config.py       # constantes globales (grille, actions, physique, hyperparamètres)
-├── engine.py       # moteur de simulation pur : ticks, obstacles, collisions, clone()
-├── ai_base.py      # interface BaseAI + IA heuristique T+1
-├── ai_search.py    # IA de recherche prédictive T+15 (heapq + mémoization)
-├── ai_genetic.py   # MLP numpy, capteurs, algorithme génétique, persistance .npz
-├── ui.py           # monitoring Pygame (rendu 2D + HUD), aucune logique de jeu
-├── main.py         # orchestrateur CLI : play / train / bench
-├── AUDIT.md        # audit du code : schémas d'architecture et plan d'amélioration
-├── ROBOTS.md       # les robots vulgarisés : stratégies, combinatoire, pistes d'IA
-└── pyproject.toml  # dépendances gérées par uv (numpy, pygame)
+├── config.py        # constantes globales (grille, actions, physique, hyperparamètres)
+├── engine.py        # moteur de simulation pur : ticks, obstacles, collisions, clone()
+├── sensors.py       # capteurs partagés des agents apprenants (base + phase)
+├── neural.py        # MLP numpy : forward, rétropropagation, Adam, génome plat
+├── ai_base.py       # interface BaseAI (familles robot/ia/hybride) + heuristique T+1
+├── ai_search.py     # recherche prédictive T+15/T+90 (heapq + mémoization)
+├── ai_mcts.py       # MCTS mono-joueur sous budget (robot)
+├── ai_genetic.py    # neuroévolution : GA, shaping, softmax, curriculum
+├── ai_qlearning.py  # DQN : replay buffer, réseau cible, epsilon-greedy
+├── ai_hybrid.py     # imitation du planificateur (clone) + recherche guidée
+├── ui.py            # monitoring Pygame (rendu 2D + HUD), aucune logique de jeu
+├── main.py          # CLI : play / train / train-dqn / train-clone / bench
+├── AUDIT.md         # audit du code : schémas d'architecture et plan d'amélioration
+├── ROBOTS.md        # robots & IA vulgarisés : stratégies, combinatoire, résultats
+└── pyproject.toml   # dépendances gérées par uv (numpy, pygame)
 ```
 
 Les schémas architectural et fonctionnel (Mermaid) ainsi que le plan d'amélioration priorisé
@@ -73,15 +84,17 @@ Prérequis : Python ≥ 3.10 et [uv](https://docs.astral.sh/uv/).
 # installation (crée .venv et installe numpy + pygame d'après uv.lock)
 uv sync
 
-# session visuelle : IA heuristique, de recherche ou réseau de neurones
-uv run python main.py --mode play --ai heuristic
+# session visuelle : n'importe lequel des 8 agents
 uv run python main.py --mode play --ai search --seed 3
+uv run python main.py --mode play --ai mcts
 uv run python main.py --mode play --ai nn            # nécessite un modèle entraîné
 
-# entraînement génétique headless (sauvegarde models/best.npz)
-uv run python main.py --mode train --generations 60
+# entraînements headless (chacun sauvegarde son modèle dans models/)
+uv run python main.py --mode train --generations 100 --curriculum   # neuroévolution
+uv run python main.py --mode train-dqn --episodes 800               # Q-learning
+uv run python main.py --mode train-clone                            # imitation (clone+guided)
 
-# comparatif headless multi-graines des trois IA
+# comparatif headless multi-graines de tous les agents disponibles
 uv run python main.py --mode bench --episodes 25
 ```
 
@@ -183,13 +196,14 @@ uv run python main.py --mode train --generations 60   # produit models/best.npz
 uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 ```
 
-Ordre de grandeur observé (25 graines, réseau entraîné 100 générations) : les IA de
-recherche `search` et `search+` gagnent **toutes** leurs parties (le générateur garantit
-depuis des rivières empilées franchissables — cf. [ROBOTS.md](ROBOTS.md), section
-« L'enquête »), l'heuristique meurt typiquement entre 30 et 90 lignes faute
-d'anticipation, et le réseau de neurones plafonne à quelques lignes — la neuroévolution
-reste très en deçà de la recherche exhaustive à budget de calcul comparable, ce qui est
-précisément l'objet du comparatif.
+Résultats observés (25 graines, tous les tableaux détaillés dans
+[ROBOTS.md](ROBOTS.md)) : les planificateurs exacts `search`, `search+` et `guided`
+gagnent **toutes** leurs parties ; le MCTS, planificateur approximatif, en gagne 16/25
+pour un coût 50 fois supérieur ; l'heuristique T+1 meurt entre 30 et 90 lignes ; et les
+trois IA (`nn`, `dqn`, `clone`) convergent vers le même plafond de ~5-6 lignes par trois
+voies d'apprentissage différentes — signe que la limite est la politique réactive
+elle-même, pas le signal d'entraînement. C'est précisément l'objet du comparatif :
+quand le futur est calculable, le calcul bat l'apprentissage.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.
