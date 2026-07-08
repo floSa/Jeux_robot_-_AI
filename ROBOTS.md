@@ -37,10 +37,12 @@ projet est là : *quand le futur est calculable, que vaut l'apprentissage face a
   volontaire vers un bord est simplement bloqué.
 - **Route :** être sur la case d'un véhicule = mort. Les **voitures occupent 2 cases**, les
   **camions 3**, de longueurs mélangées sur une même ligne, séparés par des trous.
-- **Rivière :** il faut être sur un tronc, sinon noyade. Les **troncs font 2 à 4 cases**,
-  de longueurs variées sur une même ligne. Le tronc **porte** le joueur horizontalement au
-  tick suivant ; **s'il vous porte hors de l'écran, vous mourez immédiatement** — aucune
-  action ne vous rattrape ce tick-là, il faut sauter avant.
+- **Rivière :** il faut être sur une plateforme, sinon noyade. Deux sortes de lignes d'eau :
+  - **Troncs mobiles** (2 à 4 cases, longueurs variées) : ils **portent** le joueur
+    horizontalement au tick suivant ; **s'ils vous portent hors de l'écran, mort immédiate**
+    (« sortie d'écran »), aucune action ne vous rattrape ce tick-là — il faut sauter avant.
+  - **Nénuphars** : plateformes **fixes** et isolées (5-7 par ligne), à franchir de saut en
+    saut comme des pierres de gué immobiles.
 - **Trottoir :** sûr, mais des arbres bloquent certaines cases — **jamais plus de 2 collés**,
   et il n'y a **qu'une seule ligne d'herbe à la fois**.
 - **Le motif défile en boucle.** Sur une ligne donnée, l'agencement des obstacles (leurs
@@ -260,41 +262,44 @@ problème a une solution.
 neurones cachés ; entraînements longs : dqn 4000 épisodes, ppo 1500 itérations, GA 400
 générations) :
 
+Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes**) :
+
 | Agent | Famille | Score moyen | Médiane | Record | Victoires | ms/décision |
 |---|---|---:|---:|---:|---:|---:|
-| `heuristic` | robot | 97,2 | 71 | 200 | 4/25 | 0,005 |
-| `search` | robot | **200** | 200 | 200 | **25/25** | 0,29 |
-| `mcts` | robot | 129,8 | 200 | 200 | 14/25 | 14,0 |
-| `nn` | IA | 3,8 | 3 | 8 | 0/25 | 0,13 |
-| `dqn` | IA | **16,9** | 16 | **42** | 0/25 | 0,15 |
-| `ppo` | IA | 5,9 | 5 | 10 | 0/25 | 0,35 |
-| `clone` | IA | 9,1 | 8 | 28 | 0/25 | 0,35 |
-| `guided` | hybride | **200** | 200 | 200 | **25/25** | 0,79 |
+| `heuristic` | robot | 51,4 | 38 | 200 | 1/50 | 0,003 |
+| `search` | robot | **200** | 200 | 200 | **50/50** | 0,31 |
+| `mcts` | robot | 134,3 | 200 | 200 | 25/50 | 14,0 |
+| `nn` | IA | 4,7 | 4 | 10 | 0/50 | 0,45 |
+| `dqn` | IA | **13,1** | 12 | **75** | 0/50 | 0,12 |
+| `ppo` | IA | 6,4 | 5 | 23 | 0/50 | 0,40 |
+| `clone` | IA | 7,8 | 6 | 32 | 0/50 | 0,30 |
+| `guided` | hybride | **200** | 200 | 200 | **50/50** | 0,87 |
 
 Lecture — quatre enseignements :
 
 1. **Dans un monde prévisible, la planification écrase l'apprentissage.** `search` et
-   `guided` gagnent tout ; même le MCTS, planificateur *approximatif*, gagne 14/25 — loin
-   devant toutes les IA — tout en étant ~50 fois plus coûteux que `search` pour un résultat
-   inférieur. L'échantillonnage n'apporte rien quand le futur se calcule exactement.
+   `guided` gagnent **tout** (50/50) ; même le MCTS, planificateur *approximatif*, gagne
+   25/50 — loin devant toutes les IA — tout en étant ~50 fois plus coûteux que `search` pour
+   un résultat inférieur. L'échantillonnage n'apporte rien quand le futur se calcule exactement.
 
-2. **Surprise du monde enrichi : l'heuristique (T+1) grimpe à 97, avec 4 victoires.** Avec
-   des trous plus larges entre véhicules, un agent qui ne regarde qu'un coup traverse les
-   routes bien plus facilement ; ce sont désormais surtout les rivières (qui exigent de
-   planifier) qui l'arrêtent. Un monde plus riche n'est pas forcément plus dur pour tous.
+2. **La difficulté est une question d'anticipation, pas de richesse.** L'heuristique (T+1)
+   se débrouille bien sur les routes (trous larges → 51 de moyenne, un record à 200), mais
+   trébuche dès qu'il faut *planifier* : rivières à troncs et surtout **nénuphars**, où sauter
+   de plateforme fixe en plateforme fixe demande de viser plusieurs coups à l'avance. Ajouter
+   des nénuphars a d'ailleurs fait redescendre son score (97 → 51) : ce qui coûte à un agent
+   myope, c'est tout ce qui exige un plan, pas la variété en soi.
 
-3. **Le DQN reste le seul apprenant qui décolle** (16,9, record 42) — il traverse
-   réellement des rivières, là où `nn` (3,8), `ppo` (5,9) et `clone` (9,1) stagnent. La
-   leçon des essais précédents tient : les apprenants par **gradient** profitent de la
-   capacité et de l'entraînement long (le DQN atteignait même 33 sur le monde plus simple
-   d'avant), l'**évolution** (nn) n'en profite pas, l'**imitation** (clone) plafonne au
-   niveau du réflexe. « Inutile » est devenu « joueur honnête » — mais loin des 200 exacts.
+3. **Le DQN reste le seul apprenant qui décolle** (13,1, record **75**) — il traverse
+   réellement des rivières, là où `nn` (4,7), `ppo` (6,4) et `clone` (7,8) stagnent. La leçon
+   tient : les apprenants par **gradient** profitent de la capacité et de l'entraînement long
+   (le DQN atteignait même 33 sur un monde plus simple), l'**évolution** (nn) n'en profite
+   pas, l'**imitation** (clone) plafonne au niveau du réflexe. « Inutile » est devenu « joueur
+   honnête » — mais loin des 200 exacts.
 
-4. **La hiérarchie reste une hiérarchie d'horizon** : T+1 (heuristic, 97) < rollouts
-   aléatoires (mcts, 130) < T+15 exact (search, 200). Plus on anticipe loin et juste, plus
-   on va loin ; `guided` confirme le résultat négatif (même qualité que `search` pour ~+1 %
-   de nœuds et un coût doublé — il ne reste rien à guider quand la recherche est déjà si
-   efficace).
+4. **La hiérarchie reste une hiérarchie d'horizon** : T+1 (heuristic, 51) < rollouts
+   aléatoires (mcts, 134) < T+15 exact (search, 200). Plus on anticipe loin et juste, plus on
+   va loin ; `guided` confirme le résultat négatif (même qualité que `search` pour ~+1 % de
+   nœuds et un coût doublé — il ne reste rien à guider quand la recherche est déjà si efficace).
 
 ---
 
@@ -313,37 +318,38 @@ Protocole : mêmes graines que le bench déterministe, bruit 0,1, mêmes modèle
 Résultats (bruit 0,1, mêmes 25 graines) — à comparer colonne à colonne avec le tableau
 déterministe ci-dessus :
 
-Sous bruit 0,1 (mêmes 25 graines, mêmes modèles qu'en déterministe) :
+Sous bruit 0,1 (mêmes 50 graines, mêmes modèles qu'en déterministe) :
 
 | Agent | Famille | Score moyen (dét. → bruité) | Médiane | Record | Victoires |
 |---|---|---:|---:|---:|---:|
-| `heuristic` | robot | 97,2 → 16,3 | 12 | 48 | 0/25 |
-| `search` | robot | **200 → 28,2** | 23 | 65 | 0/25 |
-| `guided` | hybride | 200 → 25,8 | 21 | 58 | 0/25 |
-| `mcts` | robot | 129,8 → 19,5 | 14 | 73 | 0/25 |
-| `dqn` | IA | 16,9 → **14,0** | 11 | 43 | 0/25 |
-| `clone` | IA | 9,1 → 7,5 | 7 | 17 | 0/25 |
-| `ppo` | IA | 5,9 → 5,8 | 6 | 11 | 0/25 |
-| `nn` | IA | 3,8 → 4,2 | 4 | 9 | 0/25 |
+| `heuristic` | robot | 51,4 → 18,3 | 13 | 75 | 0/50 |
+| `search` | robot | **200 → 27,8** | 20 | 115 | 0/50 |
+| `guided` | hybride | 200 → 23,1 | 17 | 108 | 0/50 |
+| `mcts` | robot | 134,3 → 17,3 | 12 | 75 | 0/50 |
+| `dqn` | IA | 13,1 → **12,7** | 11 | 34 | 0/50 |
+| `clone` | IA | 7,8 → 8,0 | 6 | 27 | 0/50 |
+| `ppo` | IA | 6,4 → 6,0 | 5 | 15 | 0/50 |
+| `nn` | IA | 4,7 → 4,8 | 4 | 10 | 0/50 |
 
 Trois enseignements :
 
 1. **L'oracle brisé fait s'effondrer les planificateurs.** `search` perd 86 % de son score
-   (200 → 28), `guided` de même (→ 26) ; leurs plans à 15 coups sont démentis par les
-   turbulences. Cette fois le MCTS ne prend PAS l'avantage (19,5 < 28,2) — sa « revanche »
-   observée sur le monde précédent tenait surtout à la variance de son budget au chrono.
+   (200 → 28), `guided` de même (→ 23) ; leurs plans à 15 coups sont démentis par les
+   turbulences. Le MCTS ne prend pas l'avantage (17,3 < 27,8) : sous incertitude, calculer
+   juste reste légèrement devant l'échantillonnage, mais tout le monde souffre.
 
 2. **Sous bruit, l'écart planificateurs/IA fond spectaculairement.** En déterministe, le
-   meilleur robot (200) écrasait la meilleure IA (dqn 17) d'un facteur 12. Sous bruit, ce
-   facteur tombe à **~2** : `search` 28, `mcts` 19,5, et `dqn` 14 juste derrière. Autrement
-   dit, **quand le futur n'est plus calculable, le DQN devient un concurrent sérieux des
-   planificateurs** — c'est le régime où l'apprentissage a le plus de valeur relative.
+   meilleur robot (200) écrasait la meilleure IA (dqn 13) d'un facteur 15. Sous bruit, ce
+   facteur tombe à **~2** : `search` 28, `mcts` 17, et `dqn` 13 juste derrière — le DQN fait
+   même aussi bien que le MCTS. Autrement dit, **quand le futur n'est plus calculable, le
+   DQN devient un concurrent sérieux des planificateurs** — c'est le régime où l'apprentissage
+   a le plus de valeur relative.
 
-3. **Les IA sont imperturbables au changement de régime** (dqn 16,9 → 14,0 ; nn 3,8 → 4,2 ;
-   ppo 5,9 → 5,8), alors qu'elles ont été entraînées en monde propre. Leurs réflexes
-   statistiques n'ont jamais reposé sur la précision du futur. (Sur le monde précédent on
-   avait aussi testé un entraînement *dans* le bruit : il n'aidait pas — le bruit dégrade
-   le signal d'apprentissage plus qu'il ne forge une robustesse.)
+3. **Les IA sont imperturbables au changement de régime** (dqn 13,1 → 12,7 ; clone 7,8 → 8,0 ;
+   nn 4,7 → 4,8 — certaines font même un poil mieux), alors qu'elles ont été entraînées en
+   monde propre. Leurs réflexes statistiques n'ont jamais reposé sur la précision du futur.
+   (Sur un monde précédent on avait aussi testé un entraînement *dans* le bruit : il n'aidait
+   pas — le bruit dégrade le signal d'apprentissage plus qu'il ne forge une robustesse.)
 
 # Reproduire les expériences
 
@@ -364,19 +370,24 @@ son cycle exact, équivalence bit à bit vérifiée avec l'implémentation de r�
 évaluation du GA parallélisable (`--workers`, résultats strictement identiques au
 séquentiel) ; le bruit du monde (`--noise`) s'applique aussi à l'entraînement.
 
+# Comment on évalue les agents
+
+Les scores ci-dessus viennent du **mode bench** : chaque agent joue les **mêmes N graines**
+(mondes identiques pour tous, pour que l'écart vienne de la décision et non du tirage), et on
+rapporte la moyenne, la médiane, le record et le taux de victoire de son score final `Y`. Par
+défaut on prend 25 graines ; les tableaux ci-dessus sont sur **50 graines**
+(`--mode bench --episodes 50`). Le mode `play` sert à *regarder* une partie (graine
+aléatoire à chaque lancement), pas à évaluer : une seule partie ne dit rien de la moyenne.
+
 # Pistes restantes (non implémentées)
 
-1. **Lignes de nénuphars** (rivière à plateformes fixes) — des nénuphars statiques, isolés,
-   3-4 par ligne, sur lesquels sauter comme des pierres de gué immobiles. Faisable dans le
-   cadre actuel (ligne RIVER à motif fixe, direction 0) ; le point délicat est de garantir
-   la traversée à la génération.
-2. **Lignes de train** — des rails où un train traverse périodiquement et **bloque toute la
+1. **Lignes de train** — des rails où un train traverse périodiquement et **bloque toute la
    ligne** deux ticks, avec un signal d'alerte quelques coups à l'avance (la phase des
    capteurs le donnerait déjà). Thématiquement fidèle mais plus lourd à rendre et à équilibrer.
-3. **Politique à mémoire** (réseau récurrent ou pile d'observations) — le plafond des IA
-   réactives vient peut-être de l'absence d'état interne. Le DQN à 33 (record 130) montre
-   qu'il reste de la marge.
-4. **Planification robuste au bruit** — expectimax borné ou marges de sécurité, pour rendre
+2. **Politique à mémoire** (réseau récurrent ou pile d'observations) — le plafond des IA
+   réactives vient peut-être de l'absence d'état interne. Le DQN (record > 40) montre qu'il
+   reste de la marge.
+3. **Planification robuste au bruit** — expectimax borné ou marges de sécurité, pour rendre
    aux robots une avance nette en monde stochastique plutôt que le coude-à-coude actuel.
-5. **Entraînement bien plus long du DQN** — il progressait encore à 4000 épisodes.
-6. **Tournoi complet** — matrice duel de tous les agents, classement Elo.
+4. **Entraînement bien plus long du DQN** — il progressait encore à 4000 épisodes.
+5. **Tournoi complet** — matrice duel de tous les agents, classement Elo.

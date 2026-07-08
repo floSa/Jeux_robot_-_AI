@@ -208,18 +208,18 @@ uv run python main.py --mode train --generations 60   # produit models/best.npz
 uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 ```
 
-Résultats observés (25 graines, monde enrichi ; tableaux détaillés dans
-[ROBOTS.md](ROBOTS.md)) : en monde déterministe, les planificateurs exacts `search` et
-`guided` gagnent **toutes** leurs parties, le MCTS environ la moitié pour un coût ~50 fois
-supérieur. Côté apprentissage, avec des réseaux musclés et un entraînement long, le **DQN
-est la seule IA à décoller** (17 de moyenne, record 42 — il traverse vraiment des
-rivières ; il atteignait même 33 sur le monde plus simple d'avant), les autres restant
-basses. Le plafond initial des IA tenait donc à un sous-entraînement, pas à une limite de
-principe — mais elles restent loin des 200 de la planification exacte.
+Résultats observés (50 graines, monde complet avec routes, troncs mobiles et nénuphars
+fixes ; tableaux détaillés dans [ROBOTS.md](ROBOTS.md)) : en monde déterministe, les
+planificateurs exacts `search` et `guided` gagnent **toutes** leurs parties (50/50), le
+MCTS la moitié pour un coût ~50 fois supérieur. Côté apprentissage, avec des réseaux
+musclés et un entraînement long, le **DQN est la seule IA à décoller** (13 de moyenne,
+record 75 — il traverse vraiment des rivières), les autres restant basses. Le plafond
+initial des IA tenait donc à un sous-entraînement, pas à une limite de principe — mais
+elles restent loin des 200 de la planification exacte.
 
 En monde **stochastique** (`--noise 0.1`), les planificateurs s'effondrent (`search`
 200 → 28) : le futur qu'ils calculaient n'est plus fiable. Surtout, **l'écart avec les IA
-fond d'un facteur 12 à ~2** (search 28 contre DQN 14) — quand le futur n'est plus
+fond d'un facteur 15 à ~2** (search 28 contre DQN 13) — quand le futur n'est plus
 calculable, l'apprentissage redevient un concurrent sérieux de la planification. Les IA,
 elles, ne bronchent pas au changement de régime. Quand le futur est calculable, le calcul
 exact domine largement ; quand il ne l'est plus, l'écart se referme.
