@@ -28,11 +28,14 @@ from config import (
     POPULATION_SIZE,
     PPO_ITERATIONS,
     PPO_MODEL_PATH,
+    SEARCH_HORIZON,
+    SEARCH_HORIZON_MAX,
+    SEARCH_HORIZON_MIN,
     TARGET_SCORE,
 )
 from engine import Engine
 from ai_base import BaseAI, HeuristicAI
-from ai_search import AdaptiveSearchAI, SearchAI
+from ai_search import SearchAI
 from ai_mcts import MCTSAI
 from ai_genetic import GeneticTrainer, NeuralAI, save_genome
 from ai_qlearning import DQNAI, DQNTrainer
@@ -44,7 +47,7 @@ if TYPE_CHECKING:
 
 # Agents jouables : robots (algorithmes), IA (apprentissage), hybride.
 AI_CHOICES = (
-    "heuristic", "search", "search+", "mcts", "nn", "dqn", "ppo", "clone", "guided"
+    "heuristic", "search", "mcts", "nn", "dqn", "ppo", "clone", "guided"
 )
 
 # Chemin de modèle par défaut des agents qui en chargent un.
@@ -74,13 +77,11 @@ def _model_path(name: str, override: str | None) -> str:
     return path
 
 
-def build_ai(name: str, model_override: str | None = None) -> BaseAI:
+def build_ai(name: str, model_override: str | None = None, horizon: int = SEARCH_HORIZON) -> BaseAI:
     if name == "heuristic":
         return HeuristicAI()
     if name == "search":
-        return SearchAI()
-    if name == "search+":
-        return AdaptiveSearchAI()
+        return SearchAI(horizon=horizon)
     if name == "mcts":
         return MCTSAI()
     if name == "nn":
@@ -127,9 +128,10 @@ def run_episode(
 def cmd_play(args: argparse.Namespace) -> None:
     from ui import Renderer  # import différé : l'entraînement reste sans pygame
 
-    ai = build_ai(args.ai, args.model)
+    ai = build_ai(args.ai, args.model, args.horizon)
     engine = Engine(seed=args.seed, noise=args.noise)
-    renderer = Renderer(title=f"Crossy IA — {ai.name}")
+    suffix = f" T+{args.horizon}" if ai.name == "search" else ""
+    renderer = Renderer(title=f"Crossy IA — {ai.name}{suffix}")
     try:
         result = run_episode(engine, ai, renderer)
         if not result["interrupted"]:
@@ -155,8 +157,8 @@ def cmd_duel(args: argparse.Namespace) -> None:
     """Deux agents sur la même graine (et le même bruit), côte à côte."""
     from ui import DuelRenderer  # import différé
 
-    ai1 = build_ai(args.ai, args.model)
-    ai2 = build_ai(args.ai2, None)
+    ai1 = build_ai(args.ai, args.model, args.horizon)
+    ai2 = build_ai(args.ai2, None, args.horizon)
     e1 = Engine(seed=args.seed, noise=args.noise)
     e2 = Engine(seed=args.seed, noise=args.noise)
     renderer = DuelRenderer(title=f"Crossy IA — {ai1.name} vs {ai2.name}")
@@ -257,7 +259,7 @@ def cmd_train_clone(args: argparse.Namespace) -> None:
 
 def cmd_bench(args: argparse.Namespace) -> None:
     """Protocole de comparaison : mêmes graines pour tous les agents, sans affichage."""
-    ais: list[BaseAI] = [HeuristicAI(), SearchAI(), AdaptiveSearchAI(), MCTSAI()]
+    ais: list[BaseAI] = [HeuristicAI(), SearchAI(horizon=args.horizon), MCTSAI()]
     for name, ctor in (
         ("nn", NeuralAI),
         ("dqn", DQNAI),
@@ -314,6 +316,10 @@ def parse_args() -> argparse.Namespace:
                         help="agent évalué (play) ou agent de gauche (duel)")
     parser.add_argument("--ai2", choices=AI_CHOICES, default="heuristic",
                         help="agent de droite en mode duel")
+    parser.add_argument("--horizon", type=int, default=SEARCH_HORIZON,
+                        help=f"nombre de coups anticipés par le robot search "
+                             f"({SEARCH_HORIZON_MIN} à {SEARCH_HORIZON_MAX}, défaut "
+                             f"{SEARCH_HORIZON})")
     parser.add_argument("--seed", type=int, default=0,
                         help="graine de la partie / de l'entraînement")
     parser.add_argument("--model", default=None,
@@ -339,6 +345,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if not SEARCH_HORIZON_MIN <= args.horizon <= SEARCH_HORIZON_MAX:
+        raise SystemExit(
+            f"--horizon doit être entre {SEARCH_HORIZON_MIN} et {SEARCH_HORIZON_MAX}"
+        )
     if args.episodes is None:
         args.episodes = {
             "train": EPISODES_PER_EVAL,

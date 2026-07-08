@@ -1,4 +1,4 @@
-"""IA de recherche prédictive best-first avec mémoization, horizon fixe ou adaptatif.
+"""Robot de recherche prédictive best-first à horizon configurable, avec mémoization.
 
 Le monde étant déterministe et indépendant du joueur, un état futur est
 entièrement décrit par (x, y, profondeur) : la mémoization coupe toute
@@ -19,12 +19,9 @@ from typing import Callable
 from config import (
     ACTIONS,
     Action,
-    AI_TIME_BUDGET_MS,
     ATTENDRE,
     CENTER_X,
     SEARCH_HORIZON,
-    SEARCH_HORIZON_STEP,
-    SEARCH_MAX_HORIZON,
 )
 from engine import Engine
 from ai_base import BaseAI
@@ -37,7 +34,11 @@ TieFn = Callable[[int, int, int, int, int], float]
 
 
 class SearchAI(BaseAI):
-    """Recherche exhaustive élaguée à horizon fixe (T+15 par défaut)."""
+    """Recherche exhaustive élaguée à horizon fixe (T+15 par défaut).
+
+    L'horizon (nombre de coups anticipés) est réglable au lancement via
+    --horizon : plus il est grand, plus le robot voit loin (et calcule).
+    """
 
     name = "search"
     family = "robot"
@@ -142,47 +143,3 @@ class SearchAI(BaseAI):
         self.stats["morts"] = self.stats.get("morts", 0) + deaths
         self.stats["visites"] = self.stats.get("visites", 0) + len(visited)
         return result[0], result[1], completed
-
-
-class AdaptiveSearchAI(SearchAI):
-    """Recherche à horizon adaptatif.
-
-    Si le meilleur chemin à T+horizon ne progresse pas (Y final <= Y actuel,
-    cas des rivières dont l'alignement des troncs dépasse l'horizon), relance
-    la recherche avec un horizon élargi, tant que le budget temps le permet.
-    Évite la mort par stagnation sans jamais dépasser 20 ms par coup.
-    """
-
-    name = "search+"
-    family = "robot"
-
-    def __init__(
-        self,
-        horizon: int = SEARCH_HORIZON,
-        max_horizon: int = SEARCH_MAX_HORIZON,
-        step: int = SEARCH_HORIZON_STEP,
-    ) -> None:
-        super().__init__(horizon)
-        self.max_horizon = max_horizon
-        self.step = step
-
-    def get_move(self, game_state: Engine) -> Action:
-        self.stats.clear()
-        y0 = game_state.player_y
-        deadline = perf_counter() + AI_TIME_BUDGET_MS * 0.7 / 1000.0
-
-        horizon = self.horizon
-        move, final_y, completed = self._search(game_state, horizon, deadline)
-        while (
-            completed
-            and final_y <= y0
-            and horizon < self.max_horizon
-            and perf_counter() < deadline
-        ):
-            horizon += self.step
-            deeper = self._search(game_state, horizon, deadline)
-            # une passe interrompue n'est fiable que si elle a trouvé mieux
-            if deeper[2] or deeper[1] > final_y:
-                move, final_y, completed = deeper
-        self.stats["horizon"] = horizon
-        return move

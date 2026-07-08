@@ -50,10 +50,10 @@ MAX_TREES_PER_LINE: Final[int] = 6           # < GRID_WIDTH : jamais de mur d'ar
 MAX_TICKS: Final[int] = 20_000               # borne dure anti-partie infinie
 STAGNATION_LIMIT: Final[int] = 120           # ticks sans nouveau Y max avant mort
 
-# --- IA ---
-SEARCH_HORIZON: Final[int] = 15              # profondeur de recherche T+15
-SEARCH_MAX_HORIZON: Final[int] = 90          # plafond de l'horizon adaptatif (search+)
-SEARCH_HORIZON_STEP: Final[int] = 15         # incrément d'élargissement de l'horizon
+# --- Robots ---
+SEARCH_HORIZON: Final[int] = 15              # profondeur de recherche par défaut (réglable --horizon)
+SEARCH_HORIZON_MIN: Final[int] = 1
+SEARCH_HORIZON_MAX: Final[int] = 30          # garde-fou du budget 20 ms
 AI_TIME_BUDGET_MS: Final[float] = 20.0       # budget de décision par tick
 
 # --- Capteurs des agents apprenants ---
