@@ -99,6 +99,19 @@ REWARD_STEP: Final[float] = -0.01             # coût du temps
 REWARD_DEATH: Final[float] = -1.0
 REWARD_WIN: Final[float] = 5.0
 
+# --- PPO ---
+PPO_HIDDEN_SIZE: Final[int] = 32
+PPO_LR: Final[float] = 3e-4
+PPO_GAMMA: Final[float] = 0.97
+PPO_LAMBDA: Final[float] = 0.95            # GAE
+PPO_CLIP: Final[float] = 0.2               # epsilon du surrogate clippé
+PPO_ROLLOUT: Final[int] = 2048             # pas collectés par itération
+PPO_EPOCHS: Final[int] = 4                 # passes d'optimisation par rollout
+PPO_BATCH: Final[int] = 256
+PPO_ENTROPY: Final[float] = 0.01           # bonus d'exploration
+PPO_ITERATIONS: Final[int] = 200
+PPO_MODEL_PATH: Final[str] = "models/ppo.npz"
+
 # --- MCTS (robot) ---
 MCTS_BUDGET_MS: Final[float] = 15.0
 MCTS_UCT_C: Final[float] = 1.2
