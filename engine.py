@@ -300,20 +300,24 @@ class Engine:
     # ------------------------------------------------------------- transition
 
     def apply_drift(self, x: int, y: int, tick: int) -> int:
-        """X après entraînement éventuel par le tronc porteur entre t et t+1.
+        """X après portage par le tronc entre t et t+1, SANS wrap.
 
-        Le tronc franchit le bord par modulo : le joueur porté suit son wrap.
+        Le tronc glisse le joueur d'une case ; s'il le pousse au-delà du bord,
+        la valeur retournée sort de [0, largeur) — le joueur ne réapparaît
+        jamais de l'autre côté (pas de téléportation façon Snake).
         """
         line = self.line_at(y)
         if line.kind == RIVER and x in self.occupied_columns(y, tick):
-            return (x + line.shift(tick + 1) - line.shift(tick)) % self.width
+            return x + line.shift(tick + 1) - line.shift(tick)
         return x
 
     def next_state(self, x: int, y: int, tick: int, action: Action) -> tuple[int, int, bool]:
         """Transition pure (x, y, tick) -> (x', y', vivant) après `action`.
 
-        Ordre : 1) dérive du tronc porteur, 2) action volontaire (hors grille ou
-        arbre = bloquée), 3) verdict de survie sur la case d'arrivée au tick t+1.
+        Ordre : 1) portage par le tronc (sans wrap), 2) action volontaire (hors
+        grille ou arbre = bloquée ; elle peut rattraper un portage au bord),
+        3) verdict de survie sur la case d'arrivée au tick t+1. Un joueur laissé
+        au-delà du bord par le tronc chute (pas de passage d'un bord à l'autre).
         """
         x = self.apply_drift(x, y, tick)
         dx, dy = action
@@ -322,6 +326,8 @@ class Engine:
             self._ensure_lines(ny)
             if (nx, ny) not in self.trees:
                 x, y = nx, ny
+        if not 0 <= x < self.width:
+            return max(0, min(self.width - 1, x)), y, False  # porté hors écran
         kind = self.line_at(y).kind
         if kind == ROAD and x in self.occupied_columns(y, tick + 1):
             return x, y, False
