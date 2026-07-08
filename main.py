@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import statistics
 import time
 from typing import TYPE_CHECKING
@@ -321,8 +322,9 @@ def parse_args() -> argparse.Namespace:
                         help=f"nombre de coups anticipés par le robot search "
                              f"({SEARCH_HORIZON_MIN} à {SEARCH_HORIZON_MAX}, défaut "
                              f"{SEARCH_HORIZON})")
-    parser.add_argument("--seed", type=int, default=0,
-                        help="graine de la partie / de l'entraînement")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="graine de la partie / de l'entraînement "
+                             "(play/duel : aléatoire à chaque lancement si absent)")
     parser.add_argument("--model", default=None,
                         help="chemin de modèle .npz (défaut : propre à chaque agent)")
     parser.add_argument("--generations", type=int, default=DEFAULT_GENERATIONS,
@@ -350,6 +352,9 @@ def main() -> None:
         raise SystemExit(
             f"--horizon doit être entre {SEARCH_HORIZON_MIN} et {SEARCH_HORIZON_MAX}"
         )
+    if args.seed is None:
+        # play/duel : monde différent à chaque lancement ; sinon reproductible (0)
+        args.seed = random.randrange(1_000_000) if args.mode in ("play", "duel") else 0
     if args.episodes is None:
         args.episodes = {
             "train": EPISODES_PER_EVAL,
