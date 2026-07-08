@@ -314,20 +314,19 @@ class Engine:
     def next_state(self, x: int, y: int, tick: int, action: Action) -> tuple[int, int, bool]:
         """Transition pure (x, y, tick) -> (x', y', vivant) après `action`.
 
-        Ordre : 1) portage par le tronc (sans wrap), 2) action volontaire (hors
-        grille ou arbre = bloquée ; elle peut rattraper un portage au bord),
-        3) verdict de survie sur la case d'arrivée au tick t+1. Un joueur laissé
-        au-delà du bord par le tronc chute (pas de passage d'un bord à l'autre).
+        Ordre : 1) portage par le tronc (sans wrap) — un joueur poussé au-delà
+        du bord chute AUSSITÔT, aucun rattrapage possible ; 2) action volontaire
+        (hors grille ou arbre = bloquée) ; 3) verdict de survie à t+1.
         """
         x = self.apply_drift(x, y, tick)
+        if not 0 <= x < self.width:
+            return max(0, min(self.width - 1, x)), y, False  # sorti de l'écran = mort
         dx, dy = action
         nx, ny = x + dx, y + dy
         if 0 <= nx < self.width and ny >= 0:
             self._ensure_lines(ny)
             if (nx, ny) not in self.trees:
                 x, y = nx, ny
-        if not 0 <= x < self.width:
-            return max(0, min(self.width - 1, x)), y, False  # porté hors écran
         kind = self.line_at(y).kind
         if kind == ROAD and x in self.occupied_columns(y, tick + 1):
             return x, y, False
