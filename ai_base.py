@@ -17,13 +17,18 @@ from engine import Engine
 
 
 class BaseAI(ABC):
-    """Contrat minimal d'un robot : un état de jeu -> une action par tick.
+    """Contrat minimal d'un agent : un état de jeu -> une action par tick.
+
+    `family` distingue les ROBOTS (algorithmes déterministes écrits à la main :
+    heuristique, recherche, MCTS) des IA (paramètres appris : neuroévolution,
+    DQN, imitation) et des HYBRIDES (planification guidée par apprentissage).
 
     `stats` expose des compteurs internes (nœuds explorés, branches élaguées…)
     consommés par le HUD ; aucun impact sur la logique de décision.
     """
 
     name: str = "base"
+    family: str = "robot"
 
     def __init__(self) -> None:
         self.stats: dict[str, float] = {}
@@ -49,6 +54,7 @@ class HeuristicAI(BaseAI):
     """
 
     name = "heuristic"
+    family = "robot"
 
     _PRIORITY: tuple[tuple[Action, ...], ...] = (
         (AVANCER,),

@@ -36,6 +36,7 @@ class SearchAI(BaseAI):
     """Recherche exhaustive élaguée à horizon fixe (T+15 par défaut)."""
 
     name = "search"
+    family = "robot"
 
     def __init__(self, horizon: int = SEARCH_HORIZON) -> None:
         super().__init__()
@@ -142,6 +143,7 @@ class AdaptiveSearchAI(SearchAI):
     """
 
     name = "search+"
+    family = "robot"
 
     def __init__(
         self,
