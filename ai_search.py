@@ -14,6 +14,7 @@ from __future__ import annotations
 import heapq
 from itertools import count
 from time import perf_counter
+from typing import Callable
 
 from config import (
     ACTIONS,
@@ -28,8 +29,11 @@ from config import (
 from engine import Engine
 from ai_base import BaseAI
 
-# Nœud dans le tas : (-f, dist_centre, n_ordre, x, y, profondeur, 1er coup)
-_Node = tuple[int, int, int, int, int, int, Action]
+# Nœud dans le tas : (-f, tie, n_ordre, x, y, profondeur, 1er coup)
+_Node = tuple[int, float, int, int, int, int, Action]
+
+# Départage optionnel : (x_parent, y_parent, profondeur, i_action, x_enfant) -> tie
+TieFn = Callable[[int, int, int, int, int], float]
 
 
 class SearchAI(BaseAI):
@@ -50,12 +54,17 @@ class SearchAI(BaseAI):
     # ------------------------------------------------------------------ cœur
 
     def _search(
-        self, game_state: Engine, horizon: int, deadline: float | None
+        self,
+        game_state: Engine,
+        horizon: int,
+        deadline: float | None,
+        tie_fn: TieFn | None = None,
     ) -> tuple[Action, int, bool]:
         """Une passe de recherche.
 
         Retourne (premier coup du meilleur chemin, Y final de ce chemin,
         recherche terminée sans interruption par la deadline).
+        `tie_fn` remplace le départage par distance au centre (recherche guidée).
         Les compteurs de self.stats sont incrémentés (cumulables entre passes).
         """
         x0, y0 = game_state.player_x, game_state.player_y
@@ -74,7 +83,7 @@ class SearchAI(BaseAI):
         completed = True
 
         # Expansion de la racine : chaque branche mémorise son premier coup.
-        for action in ACTIONS:
+        for i, action in enumerate(ACTIONS):
             nx, ny, alive = next_state(x0, y0, t0, action)
             if not alive:
                 deaths += 1
@@ -85,8 +94,9 @@ class SearchAI(BaseAI):
                 continue
             visited.add(state)
             f = ny + horizon - 1
+            tie = tie_fn(x0, y0, 0, i, nx) if tie_fn else float(abs(nx - CENTER_X))
             heapq.heappush(
-                frontier, (-f, abs(nx - CENTER_X), next(order), nx, ny, 1, action)
+                frontier, (-f, tie, next(order), nx, ny, 1, action)
             )
 
         result: tuple[Action, int] | None = None
@@ -104,7 +114,7 @@ class SearchAI(BaseAI):
                 result = (first, y)
                 break
             tick = t0 + depth
-            for action in ACTIONS:
+            for i, action in enumerate(ACTIONS):
                 nx, ny, alive = next_state(x, y, tick, action)
                 if not alive:
                     deaths += 1
@@ -115,9 +125,10 @@ class SearchAI(BaseAI):
                     continue
                 visited.add(state)
                 f = ny + horizon - depth - 1
+                tie = tie_fn(x, y, depth, i, nx) if tie_fn else float(abs(nx - CENTER_X))
                 heapq.heappush(
                     frontier,
-                    (-f, abs(nx - CENTER_X), next(order), nx, ny, depth + 1, first),
+                    (-f, tie, next(order), nx, ny, depth + 1, first),
                 )
 
         if result is None:
