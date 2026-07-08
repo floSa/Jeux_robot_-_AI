@@ -379,6 +379,15 @@ défaut on prend 25 graines ; les tableaux ci-dessus sont sur **50 graines**
 (`--mode bench --episodes 50`). Le mode `play` sert à *regarder* une partie (graine
 aléatoire à chaque lancement), pas à évaluer : une seule partie ne dit rien de la moyenne.
 
+**La métrique qui compte est le score MOYEN** — jusqu'où l'agent va en moyenne. La « victoire »
+(atteindre Y = 200) n'est qu'un **plafond de simulation** : un indicateur binaire que la
+solution fonctionne, pas une fin en soi. Un agent qui fait 51 de moyenne sans jamais « gagner »
+est plus intéressant qu'un détail de taux de victoire.
+
+Pourquoi les IA (`dqn`, `ppo`, `nn`, `clone`) plafonnent-elles si bas ? L'analyse détaillée et
+sourcée (environnement mortel, signal rare, politique sans mémoire, exploration faible) et le
+plan d'amélioration priorisé sont dans **[ANALYSE_IA.md](ANALYSE_IA.md)**.
+
 # Pistes restantes (non implémentées)
 
 1. **Lignes de train** — des rails où un train traverse périodiquement et **bloque toute la

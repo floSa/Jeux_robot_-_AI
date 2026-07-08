@@ -51,6 +51,7 @@ Crossy_Road/
 ├── main.py          # CLI : play / duel / train* / bench (--noise, --workers)
 ├── AUDIT.md         # audit du code : schémas d'architecture et plan d'amélioration
 ├── ROBOTS.md        # robots & IA vulgarisés : stratégies, combinatoire, résultats
+├── ANALYSE_IA.md    # pourquoi les IA sont faibles (sourcé) + plan d'amélioration
 └── pyproject.toml   # dépendances gérées par uv (numpy, pygame)
 ```
 
@@ -213,9 +214,10 @@ fixes ; tableaux détaillés dans [ROBOTS.md](ROBOTS.md)) : en monde déterminis
 planificateurs exacts `search` et `guided` gagnent **toutes** leurs parties (50/50), le
 MCTS la moitié pour un coût ~50 fois supérieur. Côté apprentissage, avec des réseaux
 musclés et un entraînement long, le **DQN est la seule IA à décoller** (13 de moyenne,
-record 75 — il traverse vraiment des rivières), les autres restant basses. Le plafond
-initial des IA tenait donc à un sous-entraînement, pas à une limite de principe — mais
-elles restent loin des 200 de la planification exacte.
+record 75 — il traverse vraiment des rivières), les autres restant basses. **Pourquoi les IA
+plafonnent-elles si bas ?** Analyse détaillée et sourcée (environnement mortel, signal rare,
+politique sans mémoire, exploration faible) et plan d'amélioration priorisé dans
+[ANALYSE_IA.md](ANALYSE_IA.md).
 
 En monde **stochastique** (`--noise 0.1`), les planificateurs s'effondrent (`search`
 200 → 28) : le futur qu'ils calculaient n'est plus fiable. Surtout, **l'écart avec les IA
