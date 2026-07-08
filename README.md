@@ -7,9 +7,13 @@ plusieurs types d'intelligences artificielles sur un terrain identique :
 
 | IA | Famille | Horizon | Principe |
 |---|---|---|---|
-| `heuristic` | déterministe gloutonne | T+1 | priorités fixes + survie immédiate |
+| `heuristic` | déterministe gloutonne | T+1 | priorités fixes + survie immédiate, préférence centre |
 | `search` | déterministe prédictive | T+15 | best-first élagué avec mémoization (type A*) |
+| `search+` | déterministe prédictive | T+15 → T+90 | horizon adaptatif sous budget temps |
 | `nn` | neuroévolution | réactif | MLP numpy entraîné par algorithme génétique |
+
+Chaque robot est expliqué de façon vulgarisée (avec le tableau de l'explosion
+combinatoire et son remède) dans [ROBOTS.md](ROBOTS.md).
 
 Le but du projet est le **comparatif algorithme déterministe vs neuroévolution** : à monde
 strictement identique (mêmes graines aléatoires), quelle approche franchit le plus vite et le
@@ -32,6 +36,7 @@ Crossy_Road/
 ├── ui.py           # monitoring Pygame (rendu 2D + HUD), aucune logique de jeu
 ├── main.py         # orchestrateur CLI : play / train / bench
 ├── AUDIT.md        # audit du code : schémas d'architecture et plan d'amélioration
+├── ROBOTS.md       # les robots vulgarisés : stratégies, combinatoire, pistes d'IA
 └── pyproject.toml  # dépendances gérées par uv (numpy, pygame)
 ```
 
@@ -178,11 +183,13 @@ uv run python main.py --mode train --generations 60   # produit models/best.npz
 uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 ```
 
-Ordre de grandeur observé (20 graines, entraînement de 40 générations) : l'IA de recherche
-gagne la grande majorité des parties (score médian 200), l'heuristique meurt typiquement
-entre 20 et 80 lignes faute d'anticipation, et le réseau de neurones progresse avec le nombre
-de générations — la neuroévolution reste très en deçà de la recherche exhaustive à budget de
-calcul comparable, ce qui est précisément l'objet du comparatif.
+Ordre de grandeur observé (25 graines, réseau entraîné 100 générations) : les IA de
+recherche `search` et `search+` gagnent **toutes** leurs parties (le générateur garantit
+depuis des rivières empilées franchissables — cf. [ROBOTS.md](ROBOTS.md), section
+« L'enquête »), l'heuristique meurt typiquement entre 30 et 90 lignes faute
+d'anticipation, et le réseau de neurones plafonne à quelques lignes — la neuroévolution
+reste très en deçà de la recherche exhaustive à budget de calcul comparable, ce qui est
+précisément l'objet du comparatif.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.
