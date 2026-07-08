@@ -8,8 +8,7 @@ plusieurs types d'intelligences artificielles sur un terrain identique :
 | Agent | Famille | Principe |
 |---|---|---|
 | `heuristic` | robot | glouton T+1, priorités fixes + préférence centre |
-| `search` | robot | best-first élagué T+15 avec mémoization (type A*) |
-| `search+` | robot | horizon adaptatif T+15 → T+90 sous budget temps |
+| `search` | robot | best-first élagué avec mémoization (type A*), horizon réglable `--horizon` |
 | `mcts` | robot | UCT mono-joueur, rollouts sous budget 15 ms |
 | `nn` | IA | MLP entraîné par neuroévolution (shaping, softmax, curriculum) |
 | `dqn` | IA | Q-learning profond, récompense dense, replay buffer |
@@ -19,8 +18,10 @@ plusieurs types d'intelligences artificielles sur un terrain identique :
 
 **Robots** = algorithmes déterministes écrits à la main (ils calculent) ; **IA** =
 paramètres appris (évolution, gradient, imitation) ; **hybride** = planification guidée
-par apprentissage. Chaque agent est expliqué de façon vulgarisée dans
-[ROBOTS.md](ROBOTS.md), avec le tableau de l'explosion combinatoire et les résultats.
+par apprentissage. Les règles du jeu (bords infranchissables, caméra qui n'avance que,
+portage des troncs, espacements constants) et chaque agent sont expliqués de façon
+vulgarisée dans [ROBOTS.md](ROBOTS.md), avec le tableau de l'explosion combinatoire et
+les résultats.
 
 Le but du projet est le **comparatif algorithme déterministe vs neuroévolution** : à monde
 strictement identique (mêmes graines aléatoires), quelle approche franchit le plus vite et le
@@ -40,7 +41,7 @@ Crossy_Road/
 ├── sensors.py       # capteurs partagés des agents apprenants (base + phase)
 ├── neural.py        # MLP numpy : forward, rétropropagation, Adam, génome plat
 ├── ai_base.py       # interface BaseAI (familles robot/ia/hybride) + heuristique T+1
-├── ai_search.py     # recherche prédictive T+15/T+90 (heapq + mémoization)
+├── ai_search.py     # recherche prédictive, horizon réglable (heapq + mémoization)
 ├── ai_mcts.py       # MCTS mono-joueur sous budget (robot)
 ├── ai_genetic.py    # neuroévolution : GA, shaping, softmax, curriculum, --workers
 ├── ai_qlearning.py  # DQN : replay buffer, réseau cible, epsilon-greedy
@@ -205,17 +206,18 @@ uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 ```
 
 Résultats observés (25 graines, tous les tableaux détaillés dans
-[ROBOTS.md](ROBOTS.md)) : en monde déterministe, les planificateurs exacts `search`,
-`search+` et `guided` gagnent **toutes** leurs parties, le MCTS 12/25 pour un coût ~50
+[ROBOTS.md](ROBOTS.md)) : en monde déterministe, les planificateurs exacts `search` et
+`guided` gagnent **toutes** leurs parties, le MCTS environ la moitié pour un coût ~50
 fois supérieur, et les quatre IA (`nn`, `dqn`, `ppo`, `clone`) convergent vers le même
-plafond de ~5-6 lignes par quatre voies d'apprentissage différentes — la limite est la
-politique réactive elle-même, pas le signal d'entraînement.
+plafond de quelques lignes par quatre voies d'apprentissage différentes — la limite est
+la politique réactive elle-même, pas le signal d'entraînement.
 
 En monde **stochastique** (`--noise 0.1`), le rapport de force bascule : `search`
-s'effondre de 200 à 47 (0 victoire), le MCTS ne fait pas mieux (son simulateur interne
-est trompé lui aussi), tandis que les IA traversent le changement de régime sans
-broncher. Quand le futur est calculable, le calcul bat l'apprentissage ; quand il ne
-l'est plus, la robustesse statistique reprend ses droits.
+s'effondre de 200 à 52 (0 victoire), et c'est le **MCTS** qui devient le meilleur agent
+(67,6, 2 victoires) — car moyenner sur mille futurs échantillonnés résiste mieux au bruit
+qu'un plan exact unique. Les IA, elles, traversent le changement de régime sans broncher.
+Quand le futur est calculable, le calcul exact gagne ; quand il ne l'est plus,
+l'échantillonnage puis la robustesse statistique reprennent leurs droits.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.

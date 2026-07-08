@@ -4,7 +4,7 @@ Le projet distingue trois familles d'agents. La frontière est nette et assumée
 
 | Famille | Définition | Agents |
 |---|---|---|
-| **Robot** | Algorithme déterministe écrit à la main. Il *calcule* — rien n'est appris. Un MCTS seul est un robot : c'est de la planification par échantillonnage, pas de l'apprentissage. | `heuristic`, `search`, `search+`, `mcts` |
+| **Robot** | Algorithme déterministe écrit à la main. Il *calcule* — rien n'est appris. Un MCTS seul est un robot : c'est de la planification par échantillonnage, pas de l'apprentissage. | `heuristic`, `search`, `mcts` |
 | **IA** | Les paramètres de la politique sont *appris* (évolution, gradient de valeur, policy gradient, imitation). | `nn`, `dqn`, `ppo`, `clone` |
 | **Hybride** | Planification guidée par un modèle appris. | `guided` |
 
@@ -26,6 +26,24 @@ le [README](README.md).
 Le monde est **déterministe et parfaitement prévisible** : la position de toute voiture
 ou tronc à tout tick futur se calcule en O(1) (formule modulo). Toute la question du
 projet est là : *quand le futur est calculable, que vaut l'apprentissage face au calcul ?*
+
+## Les règles, fidèles à Crossy Road
+
+- **On avance ou on meurt.** Le but est de monter (Y croissant) jusqu'à la ligne 200.
+  Reculer est autorisé, mais la **caméra ne redescend jamais** : elle reste calée sur le
+  point le plus haut atteint. Trop tarder (120 ticks sans nouveau record) = mort.
+- **Les bords sont des murs.** On ne peut pas sortir par la gauche ou la droite, et **on
+  ne réapparaît jamais de l'autre côté** (pas de téléportation façon Snake). Un déplacement
+  volontaire vers un bord est simplement bloqué.
+- **Route :** être sur la case d'une voiture = mort.
+- **Rivière :** il faut être sur un tronc, sinon noyade. Le tronc **porte** le joueur
+  horizontalement au tick suivant. **S'il vous porte hors de l'écran, vous mourez
+  immédiatement** — aucune action ne vous rattrape ce tick-là. Il faut sauter avant.
+- **Trottoir :** sûr, mais des arbres bloquent certaines cases.
+- **Espacements constants.** Sur une même ligne, l'écart entre les véhicules (ou les
+  troncs) est toujours le même (6 ou 12 cases) et le défilement est régulier. C'est ce qui
+  rend le futur *anticipable* : un robot peut calculer où sera chaque obstacle, une IA peut
+  apprendre le rythme.
 
 ---
 
@@ -81,31 +99,43 @@ f = y + (coups restants) — le premier chemin complet extrait est *garanti opti
 arrêt anticipé — et un repli « survivre le plus longtemps » si rien n'atteint l'horizon.
 Coût mesuré : **~0,3 ms par décision** (budget 20 ms).
 
-## `search+` — l'horizon adaptatif
+Le paramètre se règle au lancement : `--horizon 3` pour un robot myope, `--horizon 15`
+pour le voir loin. Mesuré : à T+3 il rate quelques rivières (13/15), à T+5 et au-delà il
+gagne tout — l'horizon est le curseur exact entre myopie et clairvoyance.
 
-Si le meilleur chemin à T+15 fait du surplace, symptôme d'un alignement de troncs
-au-delà de l'horizon, la recherche est relancée à T+30, T+45… jusqu'à T+90, sous une
-garde stricte de 70 % du budget. Filet de sécurité de `search`.
+## `mcts` — jouer des milliers de parties imaginaires (Monte-Carlo Tree Search)
 
-## `mcts` — le joueur de hasard (Monte-Carlo Tree Search)
+**Comment il décide, concrètement.** À chaque tick, le MCTS dispose de ~15 ms. Pendant ce
+temps, il ne calcule pas la meilleure suite de coups comme `search` : il **imagine des
+milliers de parties jouées presque au hasard** à partir de la position actuelle. Une
+« partie imaginaire » (un *rollout*) part de maintenant, joue une trentaine de coups plus
+ou moins aléatoires, et note jusqu'où elle est montée avant de mourir. En répétant ça des
+centaines de fois, il apprend quel **premier coup** mène en moyenne le plus loin — et
+c'est ce premier coup qu'il joue. La finesse (formule UCB1) est qu'il ne tire pas au sort
+uniformément : il rejoue plus souvent les premiers coups qui ont déjà bien marché, tout
+en gardant un peu d'exploration sur les autres. « Garder la meilleure », c'est donc :
+**garder le premier coup dont les parties imaginaires ont le mieux fini en moyenne.**
 
-**Pourquoi l'inclure, et pourquoi ce n'est pas une IA.** Le MCTS ne contient aucun
-paramètre appris : il explore l'arbre des coups en jouant des parties aléatoires
-(rollouts) et concentre son budget sur les branches prometteuses (formule UCB1). C'est
-un *robot* stochastique. Sa pertinence ici est celle d'un témoin expérimental : à budget
-identique (15 ms/tick), que vaut un planificateur par échantillonnage face à la
-recherche exhaustive dans un monde déterministe ? Réponse attendue et mesurée : il perd
-— l'échantillonnage n'apporte rien quand on peut tout calculer ; il deviendrait pertinent
-si le jeu devenait aléatoire (transitions bruitées), là où `search` s'effondre.
+**Est-ce pertinent pour ce jeu ? Franchement, non — et c'est justement l'intérêt de le
+tester.** Le MCTS est fait pour les jeux où l'on ne PEUT PAS tout calculer (le Go a plus
+de positions que d'atomes dans l'univers) : on échantillonne parce que l'exhaustif est
+hors de portée. Or ici, l'exhaustif EST à portée — `search` explore tous les futurs utiles
+en 0,3 ms. Utiliser du hasard là où le calcul exact tient dans le budget, c'est se priver
+volontairement de la bonne réponse. Résultat mesuré : le MCTS fait moins bien que `search`
+pour 50 fois plus de temps de calcul. **Il ne devient pertinent que si le monde cesse
+d'être calculable** — c'est exactement ce que teste le mode `--noise` plus bas, où il
+prend une revanche instructive : sous incertitude, moyenner sur mille futurs échantillonnés
+bat un plan exact unique et fragile. C'est pour l'incertain que le MCTS est fait.
 
-Implémentation : UCT mono-joueur, sélection UCB1, rollouts biaisés survie (AVANCER tenté
-en premier une fois sur deux), récompense = progression en Y, garde temporelle adaptative.
+Implémentation : UCT mono-joueur, sélection UCB1, rollouts biaisés survie (le coup AVANCER
+est tenté en premier une fois sur deux), récompense = nombre de lignes gagnées, garde
+temporelle adaptative pour ne jamais dépasser le budget.
 
 ---
 
 # Deuxième famille : les IA (apprentissage)
 
-Les trois IA lisent les mêmes **42 capteurs** : distances gauche/droite aux obstacles sur
+Les quatre IA lisent les mêmes **42 capteurs** : distances gauche/droite aux obstacles sur
 5 lignes, type de ligne (one-hot), vitesse signée, position X, flag « sur un tronc », et
 — nouveauté décisive — la **phase** : pour chaque ligne, le délai avant que la case du
 joueur soit occupée puis libérée. C'est l'information temporelle que `search` calcule via
@@ -159,19 +189,31 @@ irréductiblement du calcul.
 
 # Troisième famille : l'HYBRIDE
 
-## `guided` — la recherche guidée par politique
+## `guided` — la recherche aidée par l'IA (le patron AlphaZero en miniature)
 
-Le patron AlphaZero en miniature : l'A* garde sa borne admissible (l'optimalité), mais
-le départage des ex æquo près de la racine suit la politique apprise (celle du clone) au
-lieu de la distance au centre. Objectif mesuré : réduire les nœuds explorés à qualité
-égale. Le prior n'est évalué qu'aux profondeurs ≤ 2 : plus profond, le coût d'un forward
-par nœud dépasserait le gain — la recherche entière ne coûte que ~0,3 ms.
+**L'idée en une phrase :** c'est `search`, mais quand il doit choisir par quel coup
+commencer son exploration, il demande son avis à l'IA `clone`.
 
-**Résultat mesuré (honnêteté scientifique)** : voir tableau ci-dessous. Si la réduction
-de nœuds est marginale, l'explication est intéressante en soi : la borne admissible et
-la mémoïzation éliminent déjà 99,99 % du travail — il ne reste presque rien à guider.
-AlphaZero guide MCTS précisément parce que Go/échecs n'ont PAS de borne admissible
-exploitable ; ici elle existe, et elle est plus forte qu'un prior appris.
+**Ce que « trier les coups » veut dire, concrètement.** `search` explore l'arbre des
+futurs coup par coup. À chaque étape, il a jusqu'à 5 coups à examiner, et il doit décider
+**dans quel ordre** les explorer. Un bon ordre — commencer par les coups les plus
+prometteurs — permet de trouver la solution plus vite et d'élaguer le reste. `search`
+seul trie par une règle simple (« reste près du centre »). `guided` remplace cette règle,
+près de la racine, par la **recommandation de l'IU** : le réseau `clone` regarde la
+position et dit « à ta place, je jouerais plutôt AVANCER, puis DROITE… » ; `search`
+explore alors les coups dans cet ordre-là. L'IA ne décide pas du coup final — elle ne fait
+que *suggérer l'ordre d'exploration*. `search` garde le dernier mot et sa garantie de
+trouver le chemin optimal ; l'IA sert juste à ce qu'il y arrive en explorant moins.
+
+C'est exactement le principe d'AlphaZero (un réseau qui souffle au moteur de recherche
+quels coups regarder en priorité), en modèle réduit.
+
+**Résultat mesuré, en toute honnêteté :** ça ne sert quasiment à rien ici (voir tableau) —
+la suggestion de l'IA ne fait pas explorer moins de nœuds. Et l'explication est le vrai
+enseignement : `search` est déjà tellement efficace (sa borne mathématique + sa mémoire
+des cases déjà vues éliminent 99,99 % du travail) qu'il ne reste presque rien à optimiser.
+AlphaZero aide un moteur de recherche parce qu'au Go il n'existe aucune borne pour élaguer ;
+ici cette borne existe, et elle est plus forte que n'importe quel conseil appris.
 
 ---
 
@@ -194,44 +236,45 @@ problème a une solution.
 
 | Agent | Famille | Score moyen | Médiane | Victoires | ms/décision (moy) | ms max |
 |---|---|---:|---:|---:|---:|---:|
-| `heuristic` | robot | 63,6 | 53 | 0/25 | 0,003 | 0,21 |
-| `search` | robot | **200** | 200 | **25/25** | 0,29 | 2,09 |
-| `search+` | robot | **200** | 200 | **25/25** | 0,30 | 3,60 |
-| `mcts` | robot | 149,7 | 193 | 12/25 | 14,0 | 15,9 |
-| `nn` | IA | 6,0 | 4 | 0/25 | 0,21 | 1,31 |
-| `dqn` | IA | 5,3 | 4 | 0/25 | 0,12 | 1,14 |
-| `ppo` | IA | 5,1 | 4 | 0/25 | 0,34 | 0,90 |
-| `clone` | IA | 6,3 | 5 | 0/25 | 0,29 | 1,03 |
-| `guided` | hybride | **200** | 200 | **25/25** | 0,77 | 2,85 |
+| `heuristic` | robot | 63,6 | 53 | 0/25 | 0,003 | 0,17 |
+| `search` | robot | **200** | 200 | **25/25** | 0,31 | 5,73 |
+| `mcts` | robot | 157,2 | 200 | 14/25 | 14,0 | 17,1 |
+| `nn` | IA | 8,1 | 7 | 0/25 | 0,26 | 1,70 |
+| `dqn` | IA | 4,6 | 4 | 0/25 | 0,09 | 1,26 |
+| `ppo` | IA | 5,1 | 4 | 0/25 | 0,36 | 1,11 |
+| `clone` | IA | 7,1 | 6 | 0/25 | 0,26 | 1,06 |
+| `guided` | hybride | **200** | 200 | **25/25** | 0,83 | 5,60 |
 
-Mesure dédiée guided vs search (15 graines) : 107,4 nœuds/coup contre 105,8, soit
-**+1,5 % de nœuds** et un temps de décision quasi doublé (0,55 ms vs 0,29 ms).
+Mesure dédiée guided vs search (15 graines) : 113,9 nœuds/coup contre 112,5, soit
+**+1,2 % de nœuds** et un temps de décision plus que doublé (l'IA est interrogée en plus) —
+l'aide de l'IA fait explorer *plus*, pas moins.
 
 Lecture — quatre enseignements :
 
 1. **Dans un monde prévisible, la planification écrase l'apprentissage.** Même le MCTS,
-   planificateur *approximatif*, gagne 12 parties sur 25 — loin devant toutes les IA —
+   planificateur *approximatif*, gagne 14 parties sur 25 — loin devant toutes les IA —
    tout en étant ~50 fois plus coûteux que `search` pour un résultat inférieur :
    l'échantillonnage n'apporte rien quand le futur se calcule exactement.
 
-2. **Les quatre IA convergent vers le même plafond (~5-6 lignes) par quatre voies
-   d'apprentissage totalement différentes** : évolution (nn, 6,0), gradient de valeur
-   (dqn, 5,3), policy gradient (ppo, 5,1), imitation supervisée d'un expert parfait
-   (clone, 6,3). C'est le résultat le plus instructif du comparatif : le goulot n'est
+2. **Les quatre IA convergent vers le même plafond (~5-8 lignes) par quatre voies
+   d'apprentissage totalement différentes** : évolution (nn, 8,1), gradient de valeur
+   (dqn, 4,6), policy gradient (ppo, 5,1), imitation supervisée d'un expert parfait
+   (clone, 7,1). C'est le résultat le plus instructif du comparatif : le goulot n'est
    PAS le signal d'apprentissage — sinon ces quatre signaux donneraient des plafonds
-   différents — mais la **classe de politique réactive** elle-même (42 capteurs → une
+   très différents — mais la **classe de politique réactive** elle-même (42 capteurs → une
    décision par réflexe). Le clone le prouve : même en copiant coup par coup le champion
    invaincu, le réflexe ne franchit pas les rivières, qui exigent des plans à plusieurs
    coups que les capteurs seuls ne résument pas.
 
 3. **`guided` : le résultat négatif propre.** Qualité identique à `search` (25/25), mais
-   aucune économie de nœuds (+1,5 %) pour un coût doublé (forwards du prior). La borne
-   admissible f et la mémoïzation éliminent déjà l'essentiel du travail ; il ne reste
-   rien à guider. AlphaZero guide un MCTS précisément parce que Go et échecs n'offrent
-   aucune borne exploitable — ici elle existe, et elle est plus forte qu'un prior appris.
+   aucune économie de nœuds (+1,2 %) pour un coût plus que doublé (l'IA est interrogée à
+   chaque nœud proche de la racine). La borne admissible f et la mémoïzation éliminent
+   déjà l'essentiel du travail ; il ne reste rien à guider. AlphaZero guide un MCTS
+   précisément parce que Go et échecs n'offrent aucune borne exploitable — ici elle
+   existe, et elle est plus forte qu'un conseil appris.
 
 4. **La hiérarchie des robots est une hiérarchie d'horizon** : T+1 (heuristic, 63,6) <
-   rollouts aléatoires (mcts, 149,7) < T+15 exact (search, 200). À budget de 20 ms, la
+   rollouts aléatoires (mcts, 157,2) < T+15 exact (search, 200). À budget de 20 ms, la
    profondeur d'anticipation exacte est la seule monnaie qui compte.
 
 ---
@@ -254,32 +297,32 @@ déterministe ci-dessus :
 | Agent | Famille | Score moyen (dét. → bruité) | Médiane | Victoires |
 |---|---|---:|---:|---:|
 | `heuristic` | robot | 63,6 → 24,9 | 14 | 0/25 |
-| `search` | robot | **200 → 47,0** | 28 | 0/25 |
-| `search+` | robot | 200 → 47,0 | 28 | 0/25 |
-| `mcts` | robot | 149,7 → 44,4 | 40 | 0/25 |
-| `nn` | IA | 6,0 → **6,2** | 4 | 0/25 |
-| `dqn` | IA | 5,3 → 4,9 | 4 | 0/25 |
+| `search` | robot | **200 → 52,2** | 41 | 0/25 |
+| `mcts` | robot | 157,2 → **67,6** | 41 | **2/25** |
+| `nn` | IA | 8,1 → **8,7** | 8 | 0/25 |
+| `dqn` | IA | 4,6 → 4,2 | 4 | 0/25 |
 | `ppo` | IA | 5,1 → **5,4** | 4 | 0/25 |
-| `clone` | IA | 6,3 → **6,6** | 6 | 0/25 |
-| `guided` | hybride | 200 → 43,6 | 29 | 0/25 |
+| `clone` | IA | 7,1 → 6,2 | 6 | 0/25 |
+| `guided` | hybride | 200 → 49,9 | 41 | 0/25 |
 
 Trois enseignements :
 
-1. **L'oracle brisé anéantit les rois.** `search` perd 76 % de son score (200 → 47) et
-   la totalité de ses victoires : ses plans à 15 coups sont démentis par les turbulences.
-   Plus personne ne gagne — le jeu bruité est objectivement plus dur pour tous.
+1. **L'oracle brisé détrône les rois.** `search` perd 74 % de son score (200 → 52) et la
+   totalité de ses victoires : ses plans à 15 coups sont démentis par les turbulences. Le
+   jeu bruité est objectivement plus dur pour tous.
 
-2. **Le MCTS ne prend PAS sa revanche** (44,4 ≈ search 47,0) — résultat contre-intuitif
-   et instructif : ses rollouts interrogent le *même* modèle de prédiction trompé que
-   l'A*. L'échantillonnage ne protège pas du bruit quand c'est le simulateur interne qui
-   est faux ; il faudrait un planificateur qui *modélise* l'incertitude (expectimax,
-   marges de sécurité — voir pistes). En revanche, l'écart entre planification exacte et
-   échantillonnée disparaît : sous incertitude, calculer juste ne rapporte plus.
+2. **Cette fois, le MCTS prend sa revanche — modestement mais nettement.** Il devient le
+   meilleur agent du monde bruité (67,6 contre 52,2 pour `search`) et remporte même 2
+   parties quand plus aucun autre n'y arrive. La raison est belle : le MCTS **moyenne sur
+   des milliers de futurs échantillonnés**, alors que `search` mise tout sur *un* plan
+   exact — donc fragile dès que le futur dévie. Sous incertitude, l'agent qui répartit ses
+   paris bat celui qui parie juste mais tout sur un seul scénario. C'est exactement pour ça
+   que le MCTS existe : il est fait pour l'incertain, pas pour le calculable.
 
-3. **Les IA traversent le changement de régime sans broncher** (nn 6,0 → 6,2 ; clone
-   6,3 → 6,6 ; ppo 5,1 → 5,4 — trois sur quatre font même mieux), alors qu'elles ont été
+3. **Les IA traversent le changement de régime sans broncher** (nn 8,1 → 8,7 ; ppo
+   5,1 → 5,4 font même mieux ; les autres bougent à peine), alors qu'elles ont été
    entraînées en monde déterministe. Leurs réflexes statistiques locaux n'ont jamais
-   reposé sur la précision du futur. L'écart planificateurs/IA fond de ~33x à ~7x : la
+   reposé sur la précision du futur. L'écart planificateurs/IA fond de ~25x à ~8x : la
    robustesse est bien le terrain naturel de l'apprentissage — c'est en l'entraînant
    directement en monde bruité (piste 3) qu'on saura s'il peut combler le reste.
 
