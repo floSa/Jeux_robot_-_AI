@@ -47,6 +47,8 @@ COL_TREE_DK = (32, 82, 46)
 COL_TRUNK = (96, 68, 46)
 COL_LOG = (152, 106, 60)
 COL_LOG_DK = (120, 82, 46)
+COL_LILY = (78, 170, 96)
+COL_LILY_DK = (52, 130, 72)
 CAR_COLORS = (
     (226, 88, 74), (232, 152, 66), (98, 176, 220), (152, 202, 112), (212, 122, 192),
 )
@@ -180,9 +182,13 @@ class Renderer:
                     self._draw_vehicle(px, py, length, line.direction, y)
             else:  # RIVER
                 self._draw_ripples(x0, top)
+                lily = line.direction == 0  # nénuphars fixes
                 for sx, length in engine.obstacle_blocks(y, tick):
                     px, py = self._px(sx, y, cam, x0)
-                    self._draw_log(px, py, length)
+                    if lily:
+                        self._draw_lily(px, py)
+                    else:
+                        self._draw_log(px, py, length)
         self._draw_player(engine, cam, x0)
 
     def _draw_grass(self, x0: int, top: int, alt: tuple) -> None:
@@ -241,6 +247,21 @@ class Renderer:
         for dy in (-6, 6):
             pygame.draw.circle(self.screen, (255, 246, 205), (fx, body.centery + dy), 2)
             pygame.draw.circle(self.screen, (210, 60, 55), (bx, body.centery + dy), 2)
+
+    def _draw_lily(self, px: int, py: int) -> None:
+        """Nénuphar fixe : disque vert avec encoche et petite fleur."""
+        c = CELL_SIZE
+        cx, cy = px + c // 2, py + c // 2
+        r = c // 2 - 3
+        self._shadow(px + 4, py + 6, c - 8, c - 8, r=r)
+        pygame.draw.circle(self.screen, COL_LILY_DK, (cx, cy), r)
+        pygame.draw.circle(self.screen, COL_LILY, (cx, cy), r - 2)
+        # encoche caractéristique du nénuphar
+        pygame.draw.polygon(self.screen, COL_RIVER,
+                            [(cx, cy), (cx + r, cy - 4), (cx + r, cy + 4)])
+        # petite fleur
+        pygame.draw.circle(self.screen, (238, 226, 240), (cx - 3, cy - 3), 3)
+        pygame.draw.circle(self.screen, (240, 196, 90), (cx - 3, cy - 3), 1)
 
     def _draw_log(self, px: int, py: int, length: int) -> None:
         """Tronc vu du dessus, d'un seul tenant sur `length` cases, veiné, à anneaux."""

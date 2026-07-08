@@ -19,6 +19,8 @@ from config import (
     Action,
     CENTER_X,
     GRID_WIDTH,
+    LILY_PADS,
+    LILY_PROB,
     LINE_WEIGHTS,
     LOG_LENGTHS,
     MAX_ADJACENT_TREES,
@@ -116,6 +118,7 @@ class Engine:
         self._tree_dists: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._consecutive_rivers = 0
         self._consecutive_safe = 0
+        self._last_was_lily = False
         self._ensure_lines(SEARCH_HORIZON + START_SAFE_ROWS)
 
     # ------------------------------------------------------------------ monde
@@ -146,16 +149,30 @@ class Engine:
             self.trees.update((x, y) for x in cols)
             return Line(y=y, kind=SAFE)
 
+        prev = self.lines[y - 1] if y > 0 else None
         if kind == RIVER:
-            lengths = LOG_LENGTHS
-            gap = RIVER_GAP
-            prev = self.lines[y - 1] if y > 0 else None
-            # Rivières empilées : directions opposées (les troncs finissent par
-            # s'aligner, le saut d'une rivière à l'autre existe toujours).
-            direction = -prev.direction if (prev and prev.kind == RIVER) else self.rng.choice((-1, 1))
+            # Nénuphars : plateformes FIXES (direction 0), isolées. On évite de
+            # les empiler sur une autre ligne d'eau ou d'enchaîner deux lignes de
+            # nénuphars, pour garantir qu'on peut toujours s'aligner puis sauter.
+            eligible_lily = (
+                (prev is None or prev.kind != RIVER)
+                and not self._last_was_lily
+                and self.rng.random() < LILY_PROB
+            )
+            self._last_was_lily = eligible_lily
+            if eligible_lily:
+                return Line(y=y, kind=RIVER, direction=0, blocks=self._lily_pads())
+            lengths, gap = LOG_LENGTHS, RIVER_GAP
+            # Rivières à troncs empilées : directions opposées (les troncs finissent
+            # par s'aligner). On ignore une ligne de nénuphars (direction 0) au-dessus.
+            direction = (
+                -prev.direction
+                if (prev and prev.kind == RIVER and prev.direction != 0)
+                else self.rng.choice((-1, 1))
+            )
         else:
-            lengths = VEHICLE_LENGTHS
-            gap = ROAD_GAP
+            self._last_was_lily = False
+            lengths, gap = VEHICLE_LENGTHS, ROAD_GAP
             direction = self.rng.choice((-1, 1))
         return Line(
             y=y,
@@ -164,6 +181,18 @@ class Engine:
             period=self.rng.choice(PERIODS),
             blocks=self._pattern(lengths, gap),
         )
+
+    def _lily_pads(self) -> tuple[tuple[int, int], ...]:
+        """Nénuphars : cases sûres FIXES, isolées (>= 2 d'écart), réparties."""
+        n = self.rng.randint(LILY_PADS[0], LILY_PADS[1])
+        cols: set[int] = set()
+        attempts = 0
+        while len(cols) < n and attempts < 60:
+            c = self.rng.randint(1, self.width - 2)
+            if all(abs(c - e) >= 2 for e in cols):
+                cols.add(c)
+            attempts += 1
+        return tuple((c, 1) for c in sorted(cols))
 
     def _pattern(self, lengths: tuple[int, ...], gap: tuple[int, int]) -> tuple[tuple[int, int], ...]:
         """Motif d'obstacles (position, longueur) sur l'anneau, longueurs mélangées.
@@ -388,11 +417,17 @@ class Engine:
             return self.alive
         if self.noise > 0.0:
             self._apply_noise()  # la turbulence précède la transition t -> t+1
-        x, y, alive = self.next_state(self.player_x, self.player_y, self.tick, action)
+        px, py, pt = self.player_x, self.player_y, self.tick
+        x, y, alive = self.next_state(px, py, pt, action)
         self.tick += 1
         self.player_x, self.player_y, self.alive = x, y, alive
         if not alive:
-            self.death_cause = "noyade" if self.line_at(y).kind == RIVER else "collision"
+            if self.line_at(y).kind == ROAD:
+                self.death_cause = "collision"
+            elif not 0 <= self.apply_drift(px, py, pt) < self.width:
+                self.death_cause = "sortie d'écran"  # tronc qui pousse hors du terrain
+            else:
+                self.death_cause = "noyade"
         if y > self.score:
             self.score = y
             self.ticks_since_progress = 0

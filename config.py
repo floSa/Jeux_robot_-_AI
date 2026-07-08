@@ -39,6 +39,8 @@ VEHICLE_LENGTHS: Final[tuple[int, ...]] = (2, 3)   # voiture = 2 cases, camion =
 LOG_LENGTHS: Final[tuple[int, ...]] = (2, 3, 4)    # troncs de 2 à 4 cases, mélangés
 ROAD_GAP: Final[tuple[int, int]] = (2, 5)          # trou entre véhicules (>= 2 => toujours franchissable)
 RIVER_GAP: Final[tuple[int, int]] = (1, 2)         # eau entre troncs (dense => troncs atteignables)
+LILY_PROB: Final[float] = 0.25                     # part des rivières éligibles en nénuphars
+LILY_PADS: Final[tuple[int, int]] = (5, 7)         # nombre de nénuphars (fixes, isolés) par ligne
 PERIODS: Final[tuple[int, ...]] = (1, 2, 3)  # 1 pas toutes les `period` ticks ; vitesse = dir/period
 
 # --- Génération du monde ---
