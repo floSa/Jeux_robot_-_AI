@@ -116,23 +116,34 @@ class Engine:
         kind = self.rng.choices(kinds, weights=weights)[0]
         self._consecutive_rivers = self._consecutive_rivers + 1 if kind == RIVER else 0
         if kind == SAFE:
-            cols = frozenset(
+            candidates = [
                 x for x in range(self.width) if self.rng.random() < TREE_DENSITY
-            )
-            cols = frozenset(sorted(cols)[:MAX_TREES_PER_LINE])
+            ]
+            if len(candidates) > MAX_TREES_PER_LINE:
+                candidates = self.rng.sample(candidates, MAX_TREES_PER_LINE)
+            cols = frozenset(candidates)
             self._trees_by_row[y] = cols
             self.trees.update((x, y) for x in cols)
             return Line(y=y, kind=SAFE)
         if kind == RIVER:
-            spacing = self.rng.choices(SPACINGS, weights=RIVER_SPACING_WEIGHTS)[0]
             length = LOG_LENGTH
+            prev = self.lines[y - 1] if y > 0 else None
+            if prev is not None and prev.kind == RIVER:
+                # Rivières empilées : directions opposées + espacement dense,
+                # sinon les troncs peuvent ne jamais s'aligner (saut impossible).
+                spacing = SPACINGS[0]
+                direction = -prev.direction
+            else:
+                spacing = self.rng.choices(SPACINGS, weights=RIVER_SPACING_WEIGHTS)[0]
+                direction = self.rng.choice((-1, 1))
         else:
             spacing = self.rng.choice(SPACINGS)
             length = CAR_LENGTH
+            direction = self.rng.choice((-1, 1))
         return Line(
             y=y,
             kind=kind,
-            direction=self.rng.choice((-1, 1)),
+            direction=direction,
             period=self.rng.choice(PERIODS),
             spacing=spacing,
             length=length,
