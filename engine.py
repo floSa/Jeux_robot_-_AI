@@ -17,25 +17,27 @@ import numpy as np
 
 from config import (
     Action,
-    CAR_LENGTH,
     CENTER_X,
     GRID_WIDTH,
     LINE_WEIGHTS,
-    LOG_LENGTH,
+    LOG_LENGTHS,
+    MAX_ADJACENT_TREES,
     MAX_CONSECUTIVE_RIVERS,
+    MAX_CONSECUTIVE_SAFE,
     MAX_TICKS,
     MAX_TREES_PER_LINE,
     PERIODS,
     RIVER,
-    RIVER_SPACING_WEIGHTS,
+    RIVER_GAP,
     ROAD,
+    ROAD_GAP,
     SAFE,
     SEARCH_HORIZON,
-    SPACINGS,
     STAGNATION_LIMIT,
     START_SAFE_ROWS,
     TARGET_SCORE,
     TREE_DENSITY,
+    VEHICLE_LENGTHS,
 )
 
 EMPTY: frozenset[int] = frozenset()
@@ -43,37 +45,37 @@ EMPTY: frozenset[int] = frozenset()
 
 @dataclass(frozen=True)
 class Line:
-    """Ligne immuable du monde : type + paramètres cinématiques de ses obstacles.
+    """Ligne immuable du monde : type + motif d'obstacles qui défile en boucle.
 
-    Les obstacles mobiles sont des voitures (ROAD, mortelles) ou des troncs
-    (RIVER, plateformes de survie) ; même cinématique modulo dans les deux cas.
+    `blocks` est un motif fixe de (position de départ, longueur) au tick 0 :
+    voitures/camions (ROAD, mortels) ou troncs (RIVER, plateformes de survie),
+    de longueurs variées. Tout le motif glisse d'un bloc (`direction/period`) ;
+    comme il vit sur un anneau de `GRID_WIDTH` cases, il se reproduit à
+    l'identique — c'est cette périodicité qui rend le futur anticipable.
     """
 
     y: int
     kind: int
     direction: int = 0    # -1 vers la gauche, +1 vers la droite, 0 statique
     period: int = 1       # 1 pas de déplacement toutes les `period` ticks
-    spacing: int = 0      # espacement entre débuts d'obstacles (6 ou 12)
-    length: int = 1       # longueur d'un obstacle en cases
-    phase: int = 0        # X initial du premier obstacle
+    blocks: tuple[tuple[int, int], ...] = ()  # (position, longueur) au tick 0
 
     def shift(self, tick: int) -> int:
         """Décalage cumulé de la ligne au tick t (avant modulo)."""
         return self.direction * (tick // self.period)
 
     def occupied(self, tick: int, extra_shift: int = 0) -> frozenset[int]:
-        """Colonnes occupées par les obstacles mobiles au tick t (formule modulo).
+        """Colonnes occupées par les obstacles au tick t (motif décalé, modulo).
 
         extra_shift : décalage additionnel (turbulence du monde stochastique).
         """
-        if self.spacing == 0:
+        if not self.blocks:
             return EMPTY
         shift = self.shift(tick) + extra_shift
         cols: set[int] = set()
-        for i in range(GRID_WIDTH // self.spacing):
-            start = (self.phase + i * self.spacing + shift) % GRID_WIDTH
-            for k in range(self.length):
-                cols.add((start + k) % GRID_WIDTH)
+        for start, length in self.blocks:
+            for k in range(length):
+                cols.add((start + shift + k) % GRID_WIDTH)
         return frozenset(cols)
 
 
@@ -113,6 +115,7 @@ class Engine:
         self._tables: dict[int, tuple[np.ndarray, ...]] = {}
         self._tree_dists: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._consecutive_rivers = 0
+        self._consecutive_safe = 0
         self._ensure_lines(SEARCH_HORIZON + START_SAFE_ROWS)
 
     # ------------------------------------------------------------------ monde
@@ -125,47 +128,73 @@ class Engine:
     def _generate_line(self, y: int) -> Line:
         if y < START_SAFE_ROWS:
             self._consecutive_rivers = 0
+            self._consecutive_safe = 0
             return Line(y=y, kind=SAFE)
         kinds = list(self.line_weights)
         weights = [self.line_weights[k] for k in kinds]
         if self._consecutive_rivers >= MAX_CONSECUTIVE_RIVERS:
             weights[kinds.index(RIVER)] = 0.0
+        if self._consecutive_safe >= MAX_CONSECUTIVE_SAFE:
+            weights[kinds.index(SAFE)] = 0.0  # une seule ligne d'herbe d'affilée
         kind = self.rng.choices(kinds, weights=weights)[0]
         self._consecutive_rivers = self._consecutive_rivers + 1 if kind == RIVER else 0
+        self._consecutive_safe = self._consecutive_safe + 1 if kind == SAFE else 0
+
         if kind == SAFE:
-            candidates = [
-                x for x in range(self.width) if self.rng.random() < TREE_DENSITY
-            ]
-            if len(candidates) > MAX_TREES_PER_LINE:
-                candidates = self.rng.sample(candidates, MAX_TREES_PER_LINE)
-            cols = frozenset(candidates)
+            cols = self._grass_trees()
             self._trees_by_row[y] = cols
             self.trees.update((x, y) for x in cols)
             return Line(y=y, kind=SAFE)
+
         if kind == RIVER:
-            length = LOG_LENGTH
+            lengths = LOG_LENGTHS
+            gap = RIVER_GAP
             prev = self.lines[y - 1] if y > 0 else None
-            if prev is not None and prev.kind == RIVER:
-                # Rivières empilées : directions opposées + espacement dense,
-                # sinon les troncs peuvent ne jamais s'aligner (saut impossible).
-                spacing = SPACINGS[0]
-                direction = -prev.direction
-            else:
-                spacing = self.rng.choices(SPACINGS, weights=RIVER_SPACING_WEIGHTS)[0]
-                direction = self.rng.choice((-1, 1))
+            # Rivières empilées : directions opposées (les troncs finissent par
+            # s'aligner, le saut d'une rivière à l'autre existe toujours).
+            direction = -prev.direction if (prev and prev.kind == RIVER) else self.rng.choice((-1, 1))
         else:
-            spacing = self.rng.choice(SPACINGS)
-            length = CAR_LENGTH
+            lengths = VEHICLE_LENGTHS
+            gap = ROAD_GAP
             direction = self.rng.choice((-1, 1))
         return Line(
             y=y,
             kind=kind,
             direction=direction,
             period=self.rng.choice(PERIODS),
-            spacing=spacing,
-            length=length,
-            phase=self.rng.randrange(self.width),
+            blocks=self._pattern(lengths, gap),
         )
+
+    def _pattern(self, lengths: tuple[int, ...], gap: tuple[int, int]) -> tuple[tuple[int, int], ...]:
+        """Motif d'obstacles (position, longueur) sur l'anneau, longueurs mélangées.
+
+        Laisse une marge aux deux bords pour garantir un trou à la couture ;
+        les trous (`gap`) garantissent qu'une ligne n'est jamais pleine.
+        """
+        blocks: list[tuple[int, int]] = []
+        pos = self.rng.randint(1, 3)
+        while pos < self.width - 1:
+            length = self.rng.choice(lengths)
+            if pos + length > self.width - 1:
+                break
+            blocks.append((pos, length))
+            pos += length + self.rng.randint(gap[0], gap[1])
+        return tuple(blocks)
+
+    def _grass_trees(self) -> frozenset[int]:
+        """Colonnes d'arbres : petits bosquets de 1 ou 2 arbres, jamais 3 collés."""
+        cols: set[int] = set()
+        x = 0
+        while x < self.width and len(cols) < MAX_TREES_PER_LINE:
+            if self.rng.random() < TREE_DENSITY:
+                run = self.rng.randint(1, MAX_ADJACENT_TREES)
+                for k in range(run):
+                    if x + k < self.width and len(cols) < MAX_TREES_PER_LINE:
+                        cols.add(x + k)
+                x += run + 1  # au moins une case libre après un bosquet
+            else:
+                x += 1
+        return frozenset(cols)
 
     def line_at(self, y: int) -> Line:
         self._ensure_lines(y)
@@ -187,7 +216,7 @@ class Engine:
         calcul — la réalité peut diverger, c'est le but.
         """
         line = self.line_at(y)
-        if line.spacing == 0:
+        if not line.blocks:
             return EMPTY
         offset = self._noise_offsets.get(y, 0)
         key = (y, tick % (line.period * self.width), offset)
@@ -201,7 +230,7 @@ class Engine:
         """Turbulence : chaque ligne mobile active peut glisser de ±1 case."""
         for y in range(max(0, self.player_y - 5), self.player_y + 26):
             line = self.line_at(y)
-            if line.spacing and self.noise_rng.random() < self.noise:
+            if line.blocks and self.noise_rng.random() < self.noise:
                 self._noise_offsets[y] = (
                     self._noise_offsets.get(y, 0) + self.noise_rng.choice((-1, 1))
                 ) % self.width
@@ -209,6 +238,25 @@ class Engine:
     def noise_offset(self, y: int) -> int:
         """Décalage de turbulence courant de la ligne y (0 en monde déterministe)."""
         return self._noise_offsets.get(y, 0)
+
+    def obstacle_blocks(self, y: int, tick: int) -> list[tuple[int, int]]:
+        """Blocs (colonne de départ, longueur) de la ligne y au tick t, pour le rendu.
+
+        Un bloc qui franchit le bord droit est scindé en deux morceaux [0, w).
+        """
+        line = self.line_at(y)
+        if not line.blocks:
+            return []
+        shift = line.shift(tick) + self._noise_offsets.get(y, 0)
+        pieces: list[tuple[int, int]] = []
+        for start, length in line.blocks:
+            s = (start + shift) % self.width
+            if s + length <= self.width:
+                pieces.append((s, length))
+            else:  # scindé à la couture
+                pieces.append((s, self.width - s))
+                pieces.append((0, length - (self.width - s)))
+        return pieces
 
     def line_tables(self, y: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Tables précalculées de la ligne mobile y, sur son cycle exact.

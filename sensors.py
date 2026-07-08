@@ -95,7 +95,7 @@ def sense_base(
 def _phase(engine: Engine, x: int, ly: int, tick: int) -> tuple[float, float]:
     """(tto, ttf) : délais normalisés avant occupation puis libération de (x, ly)."""
     line = engine.line_at(ly)
-    if line.spacing == 0:  # SAFE : aucune dynamique
+    if not line.blocks:  # SAFE : aucune dynamique
         return 1.0, 0.0
     occ, _dl, _dr, tto, ttf = engine.line_tables(ly)
     cycle = occ.shape[0]

@@ -32,18 +32,22 @@ ACTION_NAMES: Final[dict[Action, str]] = {
     ATTENDRE: "ATTENDRE",
 }
 
-# --- Obstacles dynamiques ---
-SPACINGS: Final[tuple[int, ...]] = (6, 12)   # espacement strict entre débuts d'obstacles d'une ligne
-RIVER_SPACING_WEIGHTS: Final[tuple[int, ...]] = (3, 1)  # les rivières favorisent l'espacement 6
-CAR_LENGTH: Final[int] = 1                   # longueur d'une voiture (cases)
-LOG_LENGTH: Final[int] = 3                   # longueur d'un tronc (cases)
+# --- Obstacles dynamiques (motifs de blocs qui défilent en boucle) ---
+# Chaque ligne mobile porte un motif de blocs (position, longueur) qui glisse d'un
+# bloc à l'autre ; le motif se reproduit à l'identique (périodicité = anticipation).
+VEHICLE_LENGTHS: Final[tuple[int, ...]] = (2, 3)   # voiture = 2 cases, camion = 3
+LOG_LENGTHS: Final[tuple[int, ...]] = (2, 3, 4)    # troncs de 2 à 4 cases, mélangés
+ROAD_GAP: Final[tuple[int, int]] = (2, 5)          # trou entre véhicules (>= 2 => toujours franchissable)
+RIVER_GAP: Final[tuple[int, int]] = (1, 2)         # eau entre troncs (dense => troncs atteignables)
 PERIODS: Final[tuple[int, ...]] = (1, 2, 3)  # 1 pas toutes les `period` ticks ; vitesse = dir/period
 
 # --- Génération du monde ---
 START_SAFE_ROWS: Final[int] = 3              # bande de départ sans danger
 LINE_WEIGHTS: Final[dict[int, float]] = {SAFE: 0.30, ROAD: 0.45, RIVER: 0.25}
 MAX_CONSECUTIVE_RIVERS: Final[int] = 3
-TREE_DENSITY: Final[float] = 0.18
+MAX_CONSECUTIVE_SAFE: Final[int] = 1         # une seule ligne d'herbe d'affilée
+MAX_ADJACENT_TREES: Final[int] = 2           # jamais plus de 2 arbres collés
+TREE_DENSITY: Final[float] = 0.20
 MAX_TREES_PER_LINE: Final[int] = 6           # < GRID_WIDTH : jamais de mur d'arbres infranchissable
 
 # --- Garde-fous de partie ---
