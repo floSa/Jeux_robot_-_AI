@@ -84,10 +84,9 @@ def cmd_play(args: argparse.Namespace) -> None:
     try:
         result = run_episode(engine, ai, renderer)
         if not result["interrupted"]:
-            # laisse l'état final affiché un court instant
-            deadline = time.time() + 2.0
-            while time.time() < deadline and renderer.handle_events():
-                renderer.draw(engine, ai, result["avg_ms"])
+            # écran de fin avec verdict, jusqu'à une touche ou la fermeture
+            renderer.draw_end(engine, ai, result["avg_ms"])
+            renderer.wait_until_dismissed()
     finally:
         renderer.close()
     verdict = "GAGNÉ" if engine.won else ("interrompu" if result["interrupted"] else "MORT")

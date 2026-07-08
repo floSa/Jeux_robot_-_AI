@@ -55,6 +55,7 @@ class Renderer:
         pygame.display.set_caption(title)
         self.font = pygame.font.SysFont("consolas,dejavusansmono,monospace", 15)
         self.font_big = pygame.font.SysFont("consolas,dejavusansmono,monospace", 20, bold=True)
+        self.font_huge = pygame.font.SysFont("consolas,dejavusansmono,monospace", 40, bold=True)
         self.clock = pygame.time.Clock()
 
     # ------------------------------------------------------------- événements
@@ -77,6 +78,39 @@ class Renderer:
         self._draw_panel(engine, ai, last_ms)
         pygame.display.flip()
         self.clock.tick(FPS)
+
+    def draw_end(self, engine: Engine, ai: BaseAI, last_ms: float) -> None:
+        """Rendu de l'état final + bandeau de verdict superposé (sans flip du clock)."""
+        self.screen.fill(COL_BG)
+        cam_bottom = max(0, engine.player_y - VIEW_ROWS // 3)
+        self._draw_world(engine, cam_bottom)
+        self._draw_panel(engine, ai, last_ms)
+
+        if engine.won:
+            titre, col = "GAGNÉ !", COL_WON
+        else:
+            titre, col = "MORT", COL_DEAD
+        band_h = 120
+        band = pygame.Surface((self.game_width, band_h), pygame.SRCALPHA)
+        band.fill((0, 0, 0, 200))
+        self.screen.blit(band, (0, (self.height - band_h) // 2))
+        self._center(titre, self.font_huge, col, dy=-18)
+        self._center(f"score {engine.score} / {TARGET_SCORE}", self.font_big, COL_TEXT, dy=22)
+        self._center("appuie sur une touche ou ferme la fenêtre", self.font, COL_TEXT_DIM, dy=48)
+        pygame.display.flip()
+
+    def _center(self, text: str, font: pygame.font.Font, color: tuple, dy: int = 0) -> None:
+        surf = font.render(text, True, color)
+        rect = surf.get_rect(center=(self.game_width // 2, self.height // 2 + dy))
+        self.screen.blit(surf, rect)
+
+    def wait_until_dismissed(self) -> None:
+        """Bloque sur l'écran de fin jusqu'à une touche ou la fermeture de la fenêtre."""
+        while True:
+            for event in pygame.event.get():
+                if event.type in (pygame.QUIT, pygame.KEYDOWN):
+                    return
+            self.clock.tick(30)
 
     def _cell_rect(self, x: int, y: int, cam_bottom: int) -> pygame.Rect:
         row_from_bottom = y - cam_bottom
