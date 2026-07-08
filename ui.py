@@ -73,7 +73,7 @@ class Renderer:
 
     def draw(self, engine: Engine, ai: BaseAI, last_ms: float) -> None:
         self.screen.fill(COL_BG)
-        cam_bottom = max(0, engine.player_y - VIEW_ROWS // 3)
+        cam_bottom = self._camera(engine)
         self._draw_world(engine, cam_bottom)
         self._draw_panel(engine, ai, last_ms)
         pygame.display.flip()
@@ -82,7 +82,7 @@ class Renderer:
     def draw_end(self, engine: Engine, ai: BaseAI, last_ms: float) -> None:
         """Rendu de l'état final + bandeau de verdict superposé (sans flip du clock)."""
         self.screen.fill(COL_BG)
-        cam_bottom = max(0, engine.player_y - VIEW_ROWS // 3)
+        cam_bottom = self._camera(engine)
         self._draw_world(engine, cam_bottom)
         self._draw_panel(engine, ai, last_ms)
 
@@ -112,6 +112,15 @@ class Renderer:
                 if event.type in (pygame.QUIT, pygame.KEYDOWN):
                     return
             self.clock.tick(30)
+
+    @staticmethod
+    def _camera(engine: Engine) -> int:
+        """Bas de la fenêtre de vision, ancré sur le meilleur Y atteint.
+
+        engine.score ne décroît jamais : la caméra avance avec la progression
+        et ne redescend jamais quand le robot recule (le jeu pousse à avancer).
+        """
+        return max(0, engine.score - VIEW_ROWS // 3)
 
     def _cell_rect(self, x: int, y: int, cam_bottom: int, x0: int = 0) -> pygame.Rect:
         row_from_bottom = y - cam_bottom
@@ -227,8 +236,8 @@ class DuelRenderer(Renderer):
         e2: Engine, ai2: BaseAI, ms2: float,
     ) -> None:
         self.screen.fill(COL_BG)
-        self._draw_world(e1, max(0, e1.player_y - VIEW_ROWS // 3), 0)
-        self._draw_world(e2, max(0, e2.player_y - VIEW_ROWS // 3), self._x1())
+        self._draw_world(e1, self._camera(e1), 0)
+        self._draw_world(e2, self._camera(e2), self._x1())
         self._draw_duel_panel(e1, ai1, ms1, e2, ai2, ms2)
         pygame.display.flip()
         self.clock.tick(FPS)
