@@ -143,9 +143,11 @@ la formule modulo ; sans elle, un réseau ne peut pas savoir *quand* sauter.
 
 ## `nn` — la neuroévolution (sélection darwinienne)
 
-100 réseaux (42 → 16 → 5, 773 paramètres) jouent ; les meilleurs se reproduisent
-(croisement uniforme), mutent (bruit gaussien), et on recommence. Trois améliorations
-issues du plateau mesuré (~7 lignes après 300 générations de la v1) :
+100 réseaux (42 → 32 → 5) jouent ; les meilleurs se reproduisent (croisement uniforme),
+mutent (bruit gaussien), et on recommence. À noter : agrandir le réseau n'a pas aidé
+l'évolution (elle a même un peu régressé) — une sélection aveugle explore mal un grand
+espace de poids, contrairement aux méthodes par gradient. Trois améliorations issues du
+plateau mesuré (~7 lignes après 300 générations de la v1) :
 
 - **Fitness shaping** : Y max + 0,005/tick survécu — densifie le signal sans récompenser
   le camping (une stagnation complète vaut 0,6, moins qu'une ligne).
@@ -156,12 +158,18 @@ issues du plateau mesuré (~7 lignes après 300 générations de la v1) :
 
 ## `dqn` — le Q-learning profond (gradient)
 
-La comparaison canonique avec la neuroévolution : mêmes capteurs, même taille de réseau,
-mais un **signal d'apprentissage dense** au lieu du seul score final. Le réseau apprend
-la *valeur* Q(état, action) par équation de Bellman : +1 par ligne nouvelle, −0,01 par
-tick, −1 à la mort, +5 à la victoire, propagés par récompense actualisée
-(γ = 0,97). Ingrédients classiques, tous en numpy pur : replay buffer (50 000
-transitions), réseau cible synchronisé, ε-greedy décroissant, Adam sur perte TD.
+La comparaison canonique avec la neuroévolution : mêmes capteurs, mais un **signal
+d'apprentissage dense** au lieu du seul score final. Le réseau (42 → 64 → 5) apprend la
+*valeur* Q(état, action) par équation de Bellman : +1 par ligne nouvelle, −0,01 par tick,
+−1 à la mort, +5 à la victoire, propagés par récompense actualisée (γ = 0,97). Ingrédients
+classiques, tous en numpy pur : replay buffer (100 000 transitions), réseau cible
+synchronisé, ε-greedy décroissant, Adam sur perte TD.
+
+**C'est la grande réussite du projet côté apprentissage.** Avec un réseau plus large et un
+entraînement long (4000 épisodes), le DQN passe de ~5 lignes (v1) à **33 de moyenne, record
+130** : il traverse réellement des rivières, seule IA à le faire. Il reste loin des 200 de
+`search`, mais « inutile » est devenu « joueur honnête » — la preuve que le plafond initial
+tenait à un sous-entraînement, pas à une limite de principe.
 
 ## `ppo` — le policy gradient (l'algorithme de référence du RL moderne)
 
@@ -232,18 +240,20 @@ problème a une solution.
 
 # Résultats — bench officiel (25 graines identiques pour tous)
 
-`uv run python main.py --mode bench --episodes 25` :
+`uv run python main.py --mode bench --episodes 25` (réseaux musclés : nn 32, dqn/ppo 64
+neurones cachés ; entraînements longs : dqn 4000 épisodes, ppo 1500 itérations, GA 400
+générations) :
 
-| Agent | Famille | Score moyen | Médiane | Victoires | ms/décision (moy) | ms max |
+| Agent | Famille | Score moyen | Médiane | Record | Victoires | ms/décision |
 |---|---|---:|---:|---:|---:|---:|
-| `heuristic` | robot | 63,6 | 53 | 0/25 | 0,003 | 0,17 |
-| `search` | robot | **200** | 200 | **25/25** | 0,31 | 5,73 |
-| `mcts` | robot | 157,2 | 200 | 14/25 | 14,0 | 17,1 |
-| `nn` | IA | 8,1 | 7 | 0/25 | 0,26 | 1,70 |
-| `dqn` | IA | 4,6 | 4 | 0/25 | 0,09 | 1,26 |
-| `ppo` | IA | 5,1 | 4 | 0/25 | 0,36 | 1,11 |
-| `clone` | IA | 7,1 | 6 | 0/25 | 0,26 | 1,06 |
-| `guided` | hybride | **200** | 200 | **25/25** | 0,83 | 5,60 |
+| `heuristic` | robot | 63,6 | 53 | 167 | 0/25 | 0,003 |
+| `search` | robot | **200** | 200 | 200 | **25/25** | 0,32 |
+| `mcts` | robot | 159,2 | 200 | 200 | 14/25 | 14,0 |
+| `nn` | IA | 5,9 | 4 | 13 | 0/25 | 0,29 |
+| `dqn` | IA | **33,0** | 25 | **130** | 0/25 | 0,10 |
+| `ppo` | IA | 11,0 | 7 | 31 | 0/25 | 0,27 |
+| `clone` | IA | 6,4 | 6 | 16 | 0/25 | 0,30 |
+| `guided` | hybride | **200** | 200 | 200 | **25/25** | 0,83 |
 
 Mesure dédiée guided vs search (15 graines) : 113,9 nœuds/coup contre 112,5, soit
 **+1,2 % de nœuds** et un temps de décision plus que doublé (l'IA est interrogée en plus) —
@@ -256,15 +266,18 @@ Lecture — quatre enseignements :
    tout en étant ~50 fois plus coûteux que `search` pour un résultat inférieur :
    l'échantillonnage n'apporte rien quand le futur se calcule exactement.
 
-2. **Les quatre IA convergent vers le même plafond (~5-8 lignes) par quatre voies
-   d'apprentissage totalement différentes** : évolution (nn, 8,1), gradient de valeur
-   (dqn, 4,6), policy gradient (ppo, 5,1), imitation supervisée d'un expert parfait
-   (clone, 7,1). C'est le résultat le plus instructif du comparatif : le goulot n'est
-   PAS le signal d'apprentissage — sinon ces quatre signaux donneraient des plafonds
-   très différents — mais la **classe de politique réactive** elle-même (42 capteurs → une
-   décision par réflexe). Le clone le prouve : même en copiant coup par coup le champion
-   invaincu, le réflexe ne franchit pas les rivières, qui exigent des plans à plusieurs
-   coups que les capteurs seuls ne résument pas.
+2. **Le plafond des IA était surtout un manque d'entraînement — pas une fatalité.** Une
+   première version (petits réseaux, entraînements courts) plafonnait toutes les IA à
+   ~5-8 lignes. En musclant la capacité (dqn/ppo 64 neurones) et en allongeant fortement
+   l'entraînement (dqn ×5, ppo ×7), **le DQN bondit à 33 de moyenne, avec un record à 130
+   lignes** : il traverse donc vraiment des rivières, ce qu'aucune IA ne faisait avant. Le
+   PPO double (11). Mais tout dépend de la *méthode* : les apprenants par **gradient**
+   (dqn, ppo) adorent la capacité et les données ; l'**évolution** (nn) n'en profite pas
+   (elle a même légèrement régressé, 8,1 → 5,9 : plus de poids = espace à explorer plus
+   grand pour une sélection aveugle) ; et l'**imitation** (clone) reste plafonnée par la
+   qualité irréductible d'un simple réflexe. Conclusion nuancée : le réflexe local peut
+   aller bien plus loin qu'on ne croyait avec assez de gradient et de temps, mais il reste
+   loin des 200 de la planification exacte.
 
 3. **`guided` : le résultat négatif propre.** Qualité identique à `search` (25/25), mais
    aucune économie de nœuds (+1,2 %) pour un coût plus que doublé (l'IA est interrogée à
@@ -274,7 +287,7 @@ Lecture — quatre enseignements :
    existe, et elle est plus forte qu'un conseil appris.
 
 4. **La hiérarchie des robots est une hiérarchie d'horizon** : T+1 (heuristic, 63,6) <
-   rollouts aléatoires (mcts, 157,2) < T+15 exact (search, 200). À budget de 20 ms, la
+   rollouts aléatoires (mcts, 159,2) < T+15 exact (search, 200). À budget de 20 ms, la
    profondeur d'anticipation exacte est la seule monnaie qui compte.
 
 ---
@@ -294,64 +307,72 @@ Protocole : mêmes graines que le bench déterministe, bruit 0,1, mêmes modèle
 Résultats (bruit 0,1, mêmes 25 graines) — à comparer colonne à colonne avec le tableau
 déterministe ci-dessus :
 
-| Agent | Famille | Score moyen (dét. → bruité) | Médiane | Victoires |
-|---|---|---:|---:|---:|
-| `heuristic` | robot | 63,6 → 24,9 | 14 | 0/25 |
-| `search` | robot | **200 → 52,2** | 41 | 0/25 |
-| `mcts` | robot | 157,2 → **67,6** | 41 | **2/25** |
-| `nn` | IA | 8,1 → **8,7** | 8 | 0/25 |
-| `dqn` | IA | 4,6 → 4,2 | 4 | 0/25 |
-| `ppo` | IA | 5,1 → **5,4** | 4 | 0/25 |
-| `clone` | IA | 7,1 → 6,2 | 6 | 0/25 |
-| `guided` | hybride | 200 → 49,9 | 41 | 0/25 |
+Sous bruit 0,1 (mêmes 25 graines). Les IA suivies d'une `*` ont été **entraînées
+directement en monde bruité** ; les autres sont les mêmes modèles qu'en déterministe.
+
+| Agent | Famille | Score moyen (dét. → bruité) | Médiane | Record | Victoires |
+|---|---|---:|---:|---:|---:|
+| `heuristic` | robot | 63,6 → 24,9 | 14 | 79 | 0/25 |
+| `search` | robot | **200 → 52,2** | 41 | 181 | 0/25 |
+| `mcts` | robot | 159,2 → 50,1 | 38 | 200 | 1/25 |
+| `guided` | hybride | 200 → 49,3 | 39 | 142 | 0/25 |
+| `dqn` | IA | 33,0 → **25,6** | 19 | 128 | 0/25 |
+| `ppo` | IA | 11,0 → 9,1 | 8 | 27 | 0/25 |
+| `nn` | IA | 5,9 → 5,9 | 4 | 21 | 0/25 |
+| `dqn*` | IA (bruité) | — → 16,0 | 13 | 55 | 0/25 |
+| `ppo*` | IA (bruité) | — → 9,0 | 8 | 45 | 0/25 |
+| `nn*` | IA (bruité) | — → 6,1 | 6 | 17 | 0/25 |
 
 Trois enseignements :
 
-1. **L'oracle brisé détrône les rois.** `search` perd 74 % de son score (200 → 52) et la
-   totalité de ses victoires : ses plans à 15 coups sont démentis par les turbulences. Le
-   jeu bruité est objectivement plus dur pour tous.
+1. **L'oracle brisé fait s'effondrer les planificateurs.** `search` perd 74 % de son score
+   (200 → 52) et toutes ses victoires ; `guided` de même (200 → 49). Leurs plans à 15 coups
+   sont démentis par les turbulences. Le jeu bruité est bien plus dur pour tous, et search,
+   mcts et guided finissent au coude à coude (~50) : sous incertitude, calculer juste et
+   échantillonner se valent (l'avantage du MCTS varie d'un run à l'autre, son budget étant
+   mesuré au chrono).
 
-2. **Cette fois, le MCTS prend sa revanche — modestement mais nettement.** Il devient le
-   meilleur agent du monde bruité (67,6 contre 52,2 pour `search`) et remporte même 2
-   parties quand plus aucun autre n'y arrive. La raison est belle : le MCTS **moyenne sur
-   des milliers de futurs échantillonnés**, alors que `search` mise tout sur *un* plan
-   exact — donc fragile dès que le futur dévie. Sous incertitude, l'agent qui répartit ses
-   paris bat celui qui parie juste mais tout sur un seul scénario. C'est exactement pour ça
-   que le MCTS existe : il est fait pour l'incertain, pas pour le calculable.
+2. **Mais même bridés, les planificateurs restent devant toutes les IA.** Le meilleur
+   apprenant sous bruit, le DQN musclé, atteint 25,6 — la moitié des ~50 des robots. La
+   robustesse de la planification à ce type de perturbation est plus grande qu'on ne le
+   croit : perdre la moitié de son score en restant en tête, c'est une belle résistance.
 
-3. **Les IA traversent le changement de régime sans broncher** (nn 8,1 → 8,7 ; ppo
-   5,1 → 5,4 font même mieux ; les autres bougent à peine), alors qu'elles ont été
-   entraînées en monde déterministe. Leurs réflexes statistiques locaux n'ont jamais
-   reposé sur la précision du futur. L'écart planificateurs/IA fond de ~25x à ~8x : la
-   robustesse est bien le terrain naturel de l'apprentissage — c'est en l'entraînant
-   directement en monde bruité (piste 3) qu'on saura s'il peut combler le reste.
+3. **Entraîner l'IA DANS le bruit n'aide pas — au contraire (résultat honnête).** On
+   pouvait croire qu'un DQN entraîné en monde bruité y serait meilleur. Faux : `dqn*`
+   (16,0) fait *moins bien* que le `dqn` entraîné en monde propre puis lâché dans le bruit
+   (25,6). Le bruit pendant l'entraînement dégrade le signal d'apprentissage (gradients
+   plus bruités) plus qu'il ne forge une robustesse ; les compétences de traversée apprises
+   au propre se transfèrent mieux. La piste « entraîner dans le bruit » est donc explorée
+   et invalidée ici.
 
 # Reproduire les expériences
 
 ```bash
-uv run python main.py --mode train --generations 100 --curriculum --workers 4   # nn (GA)
-uv run python main.py --mode train-dqn --episodes 800                # dqn
-uv run python main.py --mode train-ppo                               # ppo
-uv run python main.py --mode train-clone                             # clone + guided
-uv run python main.py --mode bench --episodes 25                     # comparatif
-uv run python main.py --mode bench --episodes 25 --noise 0.1         # match retour
-uv run python main.py --mode duel --ai search --ai2 mcts --seed 3    # duel visuel
-uv run python main.py --mode duel --ai search --ai2 heuristic --noise 0.1
+uv run python main.py --mode train --generations 400 --curriculum --workers 4   # nn (GA)
+uv run python main.py --mode train-dqn                 # dqn (4000 épisodes, ~2 min)
+uv run python main.py --mode train-ppo                 # ppo (1500 itérations, ~25 min)
+uv run python main.py --mode train-clone --samples 120000     # clone + guided
+uv run python main.py --mode bench --episodes 25              # comparatif
+uv run python main.py --mode bench --episodes 25 --noise 0.1  # match retour
+# entraîner une IA directement dans le bruit (résultat : n'aide pas)
+uv run python main.py --mode train-dqn --noise 0.1 --model models/dqn_noisy.npz
+uv run python main.py --mode duel --ai search --ai2 dqn --seed 3   # duel visuel
 ```
 
 Infrastructure : capteurs en accès tabulaires O(1) (tables précalculées par ligne sur
 son cycle exact, équivalence bit à bit vérifiée avec l'implémentation de référence) ;
 évaluation du GA parallélisable (`--workers`, résultats strictement identiques au
-séquentiel).
+séquentiel) ; le bruit du monde (`--noise`) s'applique aussi à l'entraînement.
 
 # Pistes restantes (non implémentées)
 
-1. **Politique à mémoire** (réseau récurrent ou pile d'observations) — le plafond des
-   IA réactives vient peut-être de l'absence d'état interne : impossible de « compter »
-   l'attente devant une rivière.
-2. **Planification robuste au bruit** — expectimax borné ou replanification avec marge
-   de sécurité (éviter les cases adjacentes aux voitures) : rendre aux robots leur
-   couronne en monde stochastique.
-3. **Entraîner les IA directement en monde bruité** — mesurer si l'apprentissage,
-   naturellement statistique, y rattrape son retard sur les planificateurs aveuglés.
+1. **Politique à mémoire** (réseau récurrent ou pile d'observations) — le plafond des IA
+   réactives vient peut-être de l'absence d'état interne : impossible de « compter »
+   l'attente devant une rivière. Le DQN à 33 (record 130) montre qu'il reste de la marge.
+2. **Planification robuste au bruit** — expectimax borné ou replanification avec marge de
+   sécurité (éviter les cases adjacentes aux voitures) : rendre aux robots une avance nette
+   en monde stochastique plutôt que le coude-à-coude actuel.
+3. **Entraînement bien plus long / réglage fin du DQN** — il progressait encore ; pousser
+   au-delà de 4000 épisodes et ajuster récompense/exploration pourrait le rapprocher des
+   robots en monde déterministe.
 4. **Tournoi complet** — matrice duel de tous les agents sur N graines, classement Elo.

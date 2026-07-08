@@ -95,13 +95,14 @@ uv run python main.py --mode play --ai mcts
 uv run python main.py --mode duel --ai search --ai2 mcts --seed 3
 
 # entraînements headless (chacun sauvegarde son modèle dans models/)
-uv run python main.py --mode train --generations 100 --curriculum --workers 4
-uv run python main.py --mode train-dqn --episodes 800
-uv run python main.py --mode train-ppo
+uv run python main.py --mode train --generations 400 --curriculum --workers 4
+uv run python main.py --mode train-dqn      # 4000 épisodes (le plus performant)
+uv run python main.py --mode train-ppo      # 1500 itérations (~25 min)
 uv run python main.py --mode train-clone
 
 # comparatif headless multi-graines de tous les agents disponibles
 uv run python main.py --mode bench --episodes 25
+uv run python main.py --mode bench --episodes 25 --noise 0.1   # monde stochastique
 
 # monde STOCHASTIQUE (turbulences ±1) : le match retour des planificateurs
 uv run python main.py --mode bench --episodes 25 --noise 0.1
@@ -208,16 +209,19 @@ uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 Résultats observés (25 graines, tous les tableaux détaillés dans
 [ROBOTS.md](ROBOTS.md)) : en monde déterministe, les planificateurs exacts `search` et
 `guided` gagnent **toutes** leurs parties, le MCTS environ la moitié pour un coût ~50
-fois supérieur, et les quatre IA (`nn`, `dqn`, `ppo`, `clone`) convergent vers le même
-plafond de quelques lignes par quatre voies d'apprentissage différentes — la limite est
-la politique réactive elle-même, pas le signal d'entraînement.
+fois supérieur. Côté apprentissage, avec des réseaux musclés et un entraînement long, le
+**DQN décolle nettement** (33 de moyenne, record 130 lignes — il traverse vraiment des
+rivières), le PPO double (11), tandis que la neuroévolution et l'imitation restent basses.
+Le plafond initial des IA tenait donc surtout à un sous-entraînement, pas à une limite de
+principe — mais elles restent loin des 200 de la planification exacte.
 
-En monde **stochastique** (`--noise 0.1`), le rapport de force bascule : `search`
-s'effondre de 200 à 52 (0 victoire), et c'est le **MCTS** qui devient le meilleur agent
-(67,6, 2 victoires) — car moyenner sur mille futurs échantillonnés résiste mieux au bruit
-qu'un plan exact unique. Les IA, elles, traversent le changement de régime sans broncher.
-Quand le futur est calculable, le calcul exact gagne ; quand il ne l'est plus,
-l'échantillonnage puis la robustesse statistique reprennent leurs droits.
+En monde **stochastique** (`--noise 0.1`), les planificateurs s'effondrent (`search`
+200 → 52, 0 victoire) et se retrouvent au coude-à-coude avec le MCTS (~50). Ils restent
+néanmoins **devant toutes les IA** (meilleur apprenant : DQN 25,6) : leur robustesse à ce
+type de perturbation est réelle. Contre-intuitivement, entraîner une IA *dans* le bruit
+ne l'aide pas — le signal d'apprentissage s'y dégrade plus qu'il ne forge une robustesse.
+Quand le futur est calculable, le calcul exact domine ; quand il ne l'est plus, tous
+souffrent, et les planificateurs restent en tête.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.
