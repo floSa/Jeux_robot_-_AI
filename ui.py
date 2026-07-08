@@ -113,17 +113,18 @@ class Renderer:
                     return
             self.clock.tick(30)
 
-    def _cell_rect(self, x: int, y: int, cam_bottom: int) -> pygame.Rect:
+    def _cell_rect(self, x: int, y: int, cam_bottom: int, x0: int = 0) -> pygame.Rect:
         row_from_bottom = y - cam_bottom
         py = self.height - (row_from_bottom + 1) * CELL_SIZE
-        return pygame.Rect(x * CELL_SIZE, py, CELL_SIZE, CELL_SIZE)
+        return pygame.Rect(x0 + x * CELL_SIZE, py, CELL_SIZE, CELL_SIZE)
 
-    def _draw_world(self, engine: Engine, cam_bottom: int) -> None:
+    def _draw_world(self, engine: Engine, cam_bottom: int, x0: int = 0) -> None:
+        """Plateau dessiné à l'offset horizontal x0 (permet plusieurs plateaux)."""
         tick = engine.tick
         for y in range(cam_bottom, cam_bottom + VIEW_ROWS):
             line = engine.line_at(y)
             band = pygame.Rect(
-                0,
+                x0,
                 self.height - (y - cam_bottom + 1) * CELL_SIZE,
                 self.game_width,
                 CELL_SIZE,
@@ -132,18 +133,21 @@ class Renderer:
             if line.kind == SAFE:
                 for x in engine.tree_columns(y):
                     pygame.draw.rect(
-                        self.screen, COL_TREE, self._cell_rect(x, y, cam_bottom).inflate(-6, -6)
+                        self.screen, COL_TREE,
+                        self._cell_rect(x, y, cam_bottom, x0).inflate(-6, -6),
                     )
             else:
                 color = COL_CAR if line.kind == ROAD else COL_LOG
                 for x in engine.occupied_columns(y, tick):
                     pygame.draw.rect(
-                        self.screen, color, self._cell_rect(x, y, cam_bottom).inflate(-4, -4)
+                        self.screen, color,
+                        self._cell_rect(x, y, cam_bottom, x0).inflate(-4, -4),
                     )
         # quadrillage discret
         for gx in range(GRID_WIDTH + 1):
             pygame.draw.line(
-                self.screen, COL_GRID, (gx * CELL_SIZE, 0), (gx * CELL_SIZE, self.height), 1
+                self.screen, COL_GRID,
+                (x0 + gx * CELL_SIZE, 0), (x0 + gx * CELL_SIZE, self.height), 1,
             )
         # joueur
         if engine.won:
@@ -152,7 +156,9 @@ class Renderer:
             color = COL_PLAYER
         else:
             color = COL_DEAD
-        rect = self._cell_rect(engine.player_x, engine.player_y, cam_bottom).inflate(-8, -8)
+        rect = self._cell_rect(
+            engine.player_x, engine.player_y, cam_bottom, x0
+        ).inflate(-8, -8)
         pygame.draw.rect(self.screen, color, rect, border_radius=4)
 
     def _draw_panel(self, engine: Engine, ai: BaseAI, last_ms: float) -> None:
@@ -193,3 +199,96 @@ class Renderer:
 
     def close(self) -> None:
         pygame.quit()
+
+
+class DuelRenderer(Renderer):
+    """Deux plateaux côte à côte (même graine) + panneau comparatif."""
+
+    _GAP = 6  # séparation visuelle entre les deux plateaux (px)
+
+    def __init__(self, title: str = "Crossy IA — duel") -> None:
+        pygame.init()
+        self.game_width = GRID_WIDTH * CELL_SIZE
+        self.height = VIEW_ROWS * CELL_SIZE
+        total = 2 * self.game_width + self._GAP + PANEL_WIDTH
+        self.screen = pygame.display.set_mode((total, self.height))
+        pygame.display.set_caption(title)
+        self.font = pygame.font.SysFont("consolas,dejavusansmono,monospace", 15)
+        self.font_big = pygame.font.SysFont("consolas,dejavusansmono,monospace", 20, bold=True)
+        self.font_huge = pygame.font.SysFont("consolas,dejavusansmono,monospace", 40, bold=True)
+        self.clock = pygame.time.Clock()
+
+    def _x1(self) -> int:
+        return self.game_width + self._GAP
+
+    def draw_duel(
+        self,
+        e1: Engine, ai1: BaseAI, ms1: float,
+        e2: Engine, ai2: BaseAI, ms2: float,
+    ) -> None:
+        self.screen.fill(COL_BG)
+        self._draw_world(e1, max(0, e1.player_y - VIEW_ROWS // 3), 0)
+        self._draw_world(e2, max(0, e2.player_y - VIEW_ROWS // 3), self._x1())
+        self._draw_duel_panel(e1, ai1, ms1, e2, ai2, ms2)
+        pygame.display.flip()
+        self.clock.tick(FPS)
+
+    def _statut(self, engine: Engine) -> tuple[str, tuple[int, int, int]]:
+        if engine.won:
+            return "GAGNÉ", COL_WON
+        if engine.alive:
+            return "vivant", COL_TEXT
+        return f"mort ({engine.death_cause})", COL_DEAD
+
+    def _draw_duel_panel(
+        self,
+        e1: Engine, ai1: BaseAI, ms1: float,
+        e2: Engine, ai2: BaseAI, ms2: float,
+    ) -> None:
+        x0 = 2 * self.game_width + self._GAP
+        pygame.draw.rect(
+            self.screen, COL_PANEL, pygame.Rect(x0, 0, PANEL_WIDTH, self.height)
+        )
+        x0 += 16
+        y = 14
+        y = self._text("DUEL", x0, y, self.font_big, COL_TEXT) + 6
+        for engine, ai, ms, tag in ((e1, ai1, ms1, "◄"), (e2, ai2, ms2, "►")):
+            y = self._text(
+                f"{tag} {ai.name} ({ai.family})", x0, y, self.font_big, COL_PLAYER
+            )
+            statut, col = self._statut(engine)
+            y = self._text(f"  {statut}", x0, y, self.font, col)
+            y = self._text(
+                f"  score {engine.score}/{TARGET_SCORE} | tick {engine.tick}",
+                x0, y, self.font, COL_TEXT,
+            )
+            y = self._text(f"  décision {ms:6.2f} ms", x0, y, self.font, COL_TEXT_DIM) + 10
+        y = self._text(f"seed {e1.seed}", x0, y, self.font, COL_TEXT_DIM)
+        if e1.noise > 0:
+            self._text(f"bruit {e1.noise}", x0, y, self.font, COL_TEXT_DIM)
+
+    def draw_duel_end(
+        self,
+        e1: Engine, ai1: BaseAI,
+        e2: Engine, ai2: BaseAI,
+    ) -> None:
+        """Bandeau de verdict par-dessus l'état final des deux plateaux."""
+        k1, k2 = (e1.score, e1.won), (e2.score, e2.won)
+        if k1 > k2:
+            titre, col = f"{ai1.name} L'EMPORTE", COL_WON
+        elif k2 > k1:
+            titre, col = f"{ai2.name} L'EMPORTE", COL_WON
+        else:
+            titre, col = "ÉGALITÉ", COL_TEXT
+        largeur = 2 * self.game_width + self._GAP
+        band = pygame.Surface((largeur, 110), pygame.SRCALPHA)
+        band.fill((0, 0, 0, 200))
+        self.screen.blit(band, (0, (self.height - 110) // 2))
+        for text, font, c, dy in (
+            (titre, self.font_huge, col, -14),
+            (f"{ai1.name} {e1.score} — {e2.score} {ai2.name}", self.font_big, COL_TEXT, 26),
+        ):
+            surf = font.render(text, True, c)
+            rect = surf.get_rect(center=(largeur // 2, self.height // 2 + dy))
+            self.screen.blit(surf, rect)
+        pygame.display.flip()
