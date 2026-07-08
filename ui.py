@@ -175,12 +175,14 @@ class Renderer:
                     self._draw_tree(*self._px(gx, y, cam, x0))
             elif line.kind == ROAD:
                 self._draw_lane_marks(x0, top)
-                for gx in engine.occupied_columns(y, tick):
-                    self._draw_car(*self._px(gx, y, cam, x0), line.direction, y)
+                for sx, length in engine.obstacle_blocks(y, tick):
+                    px, py = self._px(sx, y, cam, x0)
+                    self._draw_vehicle(px, py, length, line.direction, y)
             else:  # RIVER
                 self._draw_ripples(x0, top)
-                for gx in engine.occupied_columns(y, tick):
-                    self._draw_log(*self._px(gx, y, cam, x0))
+                for sx, length in engine.obstacle_blocks(y, tick):
+                    px, py = self._px(sx, y, cam, x0)
+                    self._draw_log(px, py, length)
         self._draw_player(engine, cam, x0)
 
     def _draw_grass(self, x0: int, top: int, alt: tuple) -> None:
@@ -214,30 +216,45 @@ class Renderer:
         pygame.draw.circle(self.screen, COL_TREE_DK, (cx, py + c // 2 + 1), c // 2 - 4)
         pygame.draw.circle(self.screen, COL_TREE, (cx - 2, py + c // 2 - 2), c // 2 - 6)
 
-    def _draw_car(self, px: int, py: int, direction: int, y: int) -> None:
-        c = CELL_SIZE
-        body = pygame.Rect(px + 3, py + 5, c - 6, c - 10)
-        self._shadow(body.x + 2, body.y + 3, body.w, body.h, r=6)
-        color = CAR_COLORS[y % len(CAR_COLORS)]
-        pygame.draw.rect(self.screen, color, body, border_radius=6)
-        # toit plus clair
-        roof = body.inflate(-8, -10)
-        pygame.draw.rect(self.screen, tuple(min(255, v + 34) for v in color), roof, border_radius=4)
-        # roues
-        wy = body.bottom - 2
-        pygame.draw.circle(self.screen, (26, 26, 30), (body.left + 6, wy), 3)
-        pygame.draw.circle(self.screen, (26, 26, 30), (body.right - 6, wy), 3)
-        # phare dans le sens de marche
-        hx = body.right - 3 if direction > 0 else body.left + 3
-        pygame.draw.circle(self.screen, (255, 244, 200), (hx, body.centery), 2)
+    def _draw_vehicle(self, px: int, py: int, length: int, direction: int, y: int) -> None:
+        """Véhicule vu du dessus, d'un seul tenant sur `length` cases.
 
-    def _draw_log(self, px: int, py: int) -> None:
+        length 2 = voiture, 3 = camion (cabine séparée par une cloison claire).
+        Vitres au centre, phares blancs à l'avant, feux rouges à l'arrière.
+        """
         c = CELL_SIZE
-        bar = pygame.Rect(px + 1, py + 6, c - 2, c - 12)
-        self._shadow(bar.x + 1, bar.y + 3, bar.w, bar.h, r=7)
-        pygame.draw.rect(self.screen, COL_LOG, bar, border_radius=7)
-        for gy in (bar.centery - 4, bar.centery, bar.centery + 4):
-            pygame.draw.line(self.screen, COL_LOG_DK, (bar.left + 4, gy), (bar.right - 4, gy), 1)
+        body = pygame.Rect(px + 2, py + 4, length * c - 4, c - 8)
+        self._shadow(body.x + 2, body.y + 3, body.w, body.h, r=8)
+        color = CAR_COLORS[y % len(CAR_COLORS)]
+        pygame.draw.rect(self.screen, color, body, border_radius=8)
+        pygame.draw.rect(self.screen, tuple(min(255, v + 30) for v in color), body,
+                         width=2, border_radius=8)
+        # habitacle / vitres (vu du dessus : une bande sombre au centre)
+        glass = body.inflate(-int(0.7 * c), -10)
+        pygame.draw.rect(self.screen, (40, 48, 60), glass, border_radius=4)
+        if length >= 3:  # camion : cloison cabine
+            capx = body.right - c + 4 if direction > 0 else body.left + c - 4
+            pygame.draw.line(self.screen, tuple(max(0, v - 40) for v in color),
+                             (capx, body.top + 3), (capx, body.bottom - 3), 2)
+        # phares (avant, sens de marche) et feux arrière
+        fx, bx = (body.right - 4, body.left + 4) if direction > 0 else (body.left + 4, body.right - 4)
+        for dy in (-6, 6):
+            pygame.draw.circle(self.screen, (255, 246, 205), (fx, body.centery + dy), 2)
+            pygame.draw.circle(self.screen, (210, 60, 55), (bx, body.centery + dy), 2)
+
+    def _draw_log(self, px: int, py: int, length: int) -> None:
+        """Tronc vu du dessus, d'un seul tenant sur `length` cases, veiné, à anneaux."""
+        c = CELL_SIZE
+        bar = pygame.Rect(px + 1, py + 5, length * c - 2, c - 10)
+        self._shadow(bar.x + 1, bar.y + 3, bar.w, bar.h, r=9)
+        pygame.draw.rect(self.screen, COL_LOG, bar, border_radius=9)
+        pygame.draw.rect(self.screen, COL_LOG_DK, bar, width=2, border_radius=9)
+        # veines longitudinales
+        for gy in (bar.centery - 5, bar.centery, bar.centery + 5):
+            pygame.draw.line(self.screen, COL_LOG_DK, (bar.left + 6, gy), (bar.right - 6, gy), 1)
+        # anneaux aux extrémités (bois coupé)
+        for ex in (bar.left + 5, bar.right - 5):
+            pygame.draw.circle(self.screen, COL_LOG_DK, (ex, bar.centery), 4, 1)
 
     def _draw_player(self, engine: Engine, cam: int, x0: int) -> None:
         c = CELL_SIZE
