@@ -40,8 +40,11 @@ class BaseAI(ABC):
 class HeuristicAI(BaseAI):
     """IA gloutonne : évalue les 5 actions à T+1 seulement.
 
-    Priorité absolue : AVANCER > ATTENDRE > GAUCHE/DROITE > RECULER.
-    Égalité (latéraux) : action minimisant la distance au centre en X.
+    Priorité : AVANCER > {ATTENDRE, GAUCHE, DROITE} > RECULER.
+    Dans le groupe médian, choisit l'option qui rapproche le plus du centre
+    en X (le centre est statistiquement moins dangereux que les bords) ; à
+    distance égale, ATTENDRE est préféré (stabilité). Ce classement permet
+    de contourner un arbre au lieu d'attendre derrière indéfiniment.
     Une action bloquée (arbre, bord) est ignorée : elle gaspillerait le tick.
     """
 
@@ -49,8 +52,7 @@ class HeuristicAI(BaseAI):
 
     _PRIORITY: tuple[tuple[Action, ...], ...] = (
         (AVANCER,),
-        (ATTENDRE,),
-        (GAUCHE, DROITE),
+        (ATTENDRE, GAUCHE, DROITE),
         (RECULER,),
     )
     _INF = float("inf")
