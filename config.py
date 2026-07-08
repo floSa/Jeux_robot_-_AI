@@ -64,7 +64,7 @@ PHASE_LOOKAHEAD: Final[int] = 57             # horizon des capteurs de phase (cy
 NN_INPUT_SIZE: Final[int] = len(NN_SENSOR_ROWS) * (NN_FEATURES_PER_ROW + 2) + 2
 
 # --- Neuroévolution ---
-NN_HIDDEN_SIZE: Final[int] = 16
+NN_HIDDEN_SIZE: Final[int] = 32
 NN_OUTPUT_SIZE: Final[int] = len(ACTIONS)
 POPULATION_SIZE: Final[int] = 100
 ELITE_COUNT: Final[int] = 5
@@ -82,17 +82,17 @@ CURRICULUM_FRACTION: Final[float] = 0.4       # part des générations sur monde
 CURRICULUM_WEIGHTS: Final[dict[int, float]] = {SAFE: 0.35, ROAD: 0.65, RIVER: 0.0}
 
 # --- DQN ---
-DQN_HIDDEN_SIZE: Final[int] = 32
+DQN_HIDDEN_SIZE: Final[int] = 64
 DQN_LR: Final[float] = 1e-3
 DQN_GAMMA: Final[float] = 0.97
 DQN_EPS_START: Final[float] = 1.0
 DQN_EPS_END: Final[float] = 0.05
-DQN_EPS_DECAY: Final[float] = 0.995           # décroissance par épisode
-DQN_BUFFER_SIZE: Final[int] = 50_000
+DQN_EPS_DECAY: Final[float] = 0.999           # décroissance par épisode (entraînement long)
+DQN_BUFFER_SIZE: Final[int] = 100_000
 DQN_BATCH_SIZE: Final[int] = 64
 DQN_TRAIN_EVERY: Final[int] = 2               # 1 mise à jour tous les 2 pas
-DQN_TARGET_SYNC: Final[int] = 500             # synchronisation du réseau cible (pas)
-DQN_EPISODES: Final[int] = 800
+DQN_TARGET_SYNC: Final[int] = 1000            # synchronisation du réseau cible (pas)
+DQN_EPISODES: Final[int] = 4000
 DQN_MODEL_PATH: Final[str] = "models/dqn.npz"
 REWARD_PROGRESS: Final[float] = 1.0           # nouvelle ligne max franchie
 REWARD_STEP: Final[float] = -0.01             # coût du temps
@@ -100,16 +100,16 @@ REWARD_DEATH: Final[float] = -1.0
 REWARD_WIN: Final[float] = 5.0
 
 # --- PPO ---
-PPO_HIDDEN_SIZE: Final[int] = 32
+PPO_HIDDEN_SIZE: Final[int] = 64
 PPO_LR: Final[float] = 3e-4
 PPO_GAMMA: Final[float] = 0.97
 PPO_LAMBDA: Final[float] = 0.95            # GAE
 PPO_CLIP: Final[float] = 0.2               # epsilon du surrogate clippé
-PPO_ROLLOUT: Final[int] = 2048             # pas collectés par itération
+PPO_ROLLOUT: Final[int] = 4096             # pas collectés par itération
 PPO_EPOCHS: Final[int] = 4                 # passes d'optimisation par rollout
 PPO_BATCH: Final[int] = 256
 PPO_ENTROPY: Final[float] = 0.01           # bonus d'exploration
-PPO_ITERATIONS: Final[int] = 200
+PPO_ITERATIONS: Final[int] = 1500
 PPO_MODEL_PATH: Final[str] = "models/ppo.npz"
 
 # --- MCTS (robot) ---
@@ -128,7 +128,7 @@ IMITATION_BATCH: Final[int] = 128
 GUIDED_PRIOR_DEPTH: Final[int] = 2            # profondeur max où le prior guide le tri
 
 # --- UI ---
-CELL_SIZE: Final[int] = 28
+CELL_SIZE: Final[int] = 32
 VIEW_ROWS: Final[int] = 21                   # lignes visibles à l'écran
-PANEL_WIDTH: Final[int] = 320                # panneau de statistiques (px)
+PANEL_WIDTH: Final[int] = 340                # panneau de statistiques (px)
 FPS: Final[int] = 15

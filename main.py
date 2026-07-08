@@ -200,7 +200,8 @@ def cmd_train(args: argparse.Namespace) -> None:
         f"curriculum={'oui' if args.curriculum else 'non'}"
     )
     trainer = GeneticTrainer(
-        population_size=args.population, episodes=args.episodes, seed=args.seed
+        population_size=args.population, episodes=args.episodes, seed=args.seed,
+        world_noise=args.noise,
     )
     t0 = time.perf_counter()
     best, fitness = trainer.evolve(
@@ -216,8 +217,8 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 
 def cmd_train_dqn(args: argparse.Namespace) -> None:
-    print(f"DQN : épisodes={args.episodes}, graine={args.seed}")
-    trainer = DQNTrainer(seed=args.seed)
+    print(f"DQN : épisodes={args.episodes}, graine={args.seed}, bruit={args.noise}")
+    trainer = DQNTrainer(seed=args.seed, world_noise=args.noise)
     t0 = time.perf_counter()
     net, score = trainer.train(episodes=args.episodes)
     elapsed = time.perf_counter() - t0
@@ -230,8 +231,8 @@ def cmd_train_dqn(args: argparse.Namespace) -> None:
 
 
 def cmd_train_ppo(args: argparse.Namespace) -> None:
-    print(f"PPO : itérations={args.episodes}, graine={args.seed}")
-    trainer = PPOTrainer(seed=args.seed)
+    print(f"PPO : itérations={args.episodes}, graine={args.seed}, bruit={args.noise}")
+    trainer = PPOTrainer(seed=args.seed, world_noise=args.noise)
     t0 = time.perf_counter()
     net, score = trainer.train(iterations=args.episodes)
     elapsed = time.perf_counter() - t0

@@ -71,9 +71,10 @@ class PPOAI(BaseAI):
 class PPOTrainer:
     """Boucle rollout -> GAE -> optimisation clippée."""
 
-    def __init__(self, seed: int = 0) -> None:
+    def __init__(self, seed: int = 0, world_noise: float = 0.0) -> None:
         self.rng = random.Random(seed)
         self.np_rng = np.random.default_rng(seed)
+        self.world_noise = world_noise  # bruit du monde pendant l'entraînement
         self.policy = MLP(POLICY_LAYOUT, seed=seed)
         self.value = MLP(VALUE_LAYOUT, seed=seed + 1)
         self.best_policy = self.policy.copy()
@@ -101,7 +102,7 @@ class PPOTrainer:
         logps = np.empty(n_steps)
         for i in range(n_steps):
             if self._env is None or self._env.game_over:
-                self._env = Engine(seed=self.rng.randrange(1_000_000))
+                self._env = Engine(seed=self.rng.randrange(1_000_000), noise=self.world_noise)
                 self._state = sense(self._env)
             assert self._state is not None
             probs = softmax(self.policy.forward(self._state))
@@ -186,7 +187,7 @@ class PPOTrainer:
         agent = PPOAI(self.policy)
         scores = []
         for seed in seeds:
-            engine = Engine(seed=seed)
+            engine = Engine(seed=seed, noise=self.world_noise)
             while not engine.game_over:
                 engine.step(agent.get_move(engine))
             scores.append(engine.score)

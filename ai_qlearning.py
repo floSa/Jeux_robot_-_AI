@@ -74,9 +74,10 @@ class DQNAI(BaseAI):
 class DQNTrainer:
     """Boucle d'apprentissage : collecte epsilon-greedy + descente TD."""
 
-    def __init__(self, seed: int = 0) -> None:
+    def __init__(self, seed: int = 0, world_noise: float = 0.0) -> None:
         self.rng = random.Random(seed)
         self.np_rng = np.random.default_rng(seed)
+        self.world_noise = world_noise  # bruit du monde pendant l'entraînement
         self.online = MLP(DQN_LAYOUT, seed=seed)
         self.target = self.online.copy()
         self.buffer: deque[Transition] = deque(maxlen=DQN_BUFFER_SIZE)
@@ -126,7 +127,7 @@ class DQNTrainer:
         agent = DQNAI(self.online)
         scores = []
         for seed in seeds:
-            engine = Engine(seed=seed)
+            engine = Engine(seed=seed, noise=self.world_noise)
             while not engine.game_over:
                 engine.step(agent.get_move(engine))
             scores.append(engine.score)
@@ -142,7 +143,7 @@ class DQNTrainer:
         epsilon = DQN_EPS_START
         recent: deque[int] = deque(maxlen=25)
         for ep in range(episodes):
-            engine = Engine(seed=self.rng.randrange(1_000_000))
+            engine = Engine(seed=self.rng.randrange(1_000_000), noise=self.world_noise)
             state = sense(engine)
             while not engine.game_over:
                 action = self._epsilon_greedy(state, epsilon)

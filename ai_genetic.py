@@ -76,13 +76,15 @@ class NeuralAI(BaseAI):
 
 
 def _eval_genome(
-    args: tuple[np.ndarray, tuple[int, ...], float, dict[int, float] | None, bool],
+    args: tuple[np.ndarray, tuple[int, ...], float, dict[int, float] | None, bool, float],
 ) -> float:
     """Évaluation d'un génome — fonction de module, compatible multiprocessing."""
-    genome, seeds, temperature, line_weights, shaped = args
+    genome, seeds, temperature, line_weights, shaped, world_noise = args
     total = 0.0
     for s in seeds:
-        score, ticks = GeneticTrainer.run_episode(genome, s, temperature, line_weights)
+        score, ticks = GeneticTrainer.run_episode(
+            genome, s, temperature, line_weights, world_noise
+        )
         total += score + (FITNESS_SURVIVAL_BONUS * ticks if shaped else 0.0)
     return total / len(seeds)
 
@@ -115,9 +117,11 @@ class GeneticTrainer:
         population_size: int = POPULATION_SIZE,
         episodes: int = EPISODES_PER_EVAL,
         seed: int = 0,
+        world_noise: float = 0.0,
     ) -> None:
         self.rng = np.random.default_rng(seed)
         self.episodes = episodes
+        self.world_noise = world_noise  # bruit du monde pendant l'entraînement
         self.population: list[np.ndarray] = [
             random_flat(LAYOUT, self.rng) for _ in range(population_size)
         ]
@@ -132,10 +136,11 @@ class GeneticTrainer:
         seed: int,
         temperature: float = 0.0,
         line_weights: dict[int, float] | None = None,
+        world_noise: float = 0.0,
     ) -> tuple[int, int]:
         """Joue un épisode complet ; retourne (Y maximal, ticks survécus)."""
         ai = NeuralAI.from_genome(genome, temperature=temperature, seed=seed)
-        engine = Engine(seed=seed, line_weights=line_weights)
+        engine = Engine(seed=seed, line_weights=line_weights, noise=world_noise)
         while not engine.game_over:
             engine.step(ai.get_move(engine))
         return engine.score, engine.tick
@@ -153,7 +158,9 @@ class GeneticTrainer:
         Le bonus (0,005/tick) reste très inférieur à une ligne franchie : il
         densifie le signal en début d'évolution sans récompenser le camping.
         """
-        return _eval_genome((genome, seeds, temperature, line_weights, shaped))
+        return _eval_genome(
+            (genome, seeds, temperature, line_weights, shaped, self.world_noise)
+        )
 
     # -- opérateurs génétiques ----------------------------------------------
 
@@ -212,7 +219,8 @@ class GeneticTrainer:
             weights = CURRICULUM_WEIGHTS if gen < cutoff else None
             seeds = tuple(int(s) for s in self.rng.integers(0, 100_000, self.episodes))
             jobs = [
-                (g, seeds, TRAIN_TEMPERATURE, weights, True) for g in self.population
+                (g, seeds, TRAIN_TEMPERATURE, weights, True, self.world_noise)
+                for g in self.population
             ]
             if pool is not None:
                 fits = np.array(pool.map(_eval_genome, jobs, chunksize=4))
