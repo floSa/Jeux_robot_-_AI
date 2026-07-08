@@ -13,6 +13,7 @@ plusieurs types d'intelligences artificielles sur un terrain identique :
 | `mcts` | robot | UCT mono-joueur, rollouts sous budget 15 ms |
 | `nn` | IA | MLP entraîné par neuroévolution (shaping, softmax, curriculum) |
 | `dqn` | IA | Q-learning profond, récompense dense, replay buffer |
+| `ppo` | IA | policy gradient actor-critic (surrogate clippé, GAE) |
 | `clone` | IA | imitation du planificateur (distillation de `search`) |
 | `guided` | hybride | recherche A* départagée par la politique apprise |
 
@@ -41,11 +42,12 @@ Crossy_Road/
 ├── ai_base.py       # interface BaseAI (familles robot/ia/hybride) + heuristique T+1
 ├── ai_search.py     # recherche prédictive T+15/T+90 (heapq + mémoization)
 ├── ai_mcts.py       # MCTS mono-joueur sous budget (robot)
-├── ai_genetic.py    # neuroévolution : GA, shaping, softmax, curriculum
+├── ai_genetic.py    # neuroévolution : GA, shaping, softmax, curriculum, --workers
 ├── ai_qlearning.py  # DQN : replay buffer, réseau cible, epsilon-greedy
+├── ai_ppo.py        # PPO : actor-critic, surrogate clippé, GAE
 ├── ai_hybrid.py     # imitation du planificateur (clone) + recherche guidée
-├── ui.py            # monitoring Pygame (rendu 2D + HUD), aucune logique de jeu
-├── main.py          # CLI : play / train / train-dqn / train-clone / bench
+├── ui.py            # monitoring Pygame (rendu 2D + HUD + duel), aucune logique de jeu
+├── main.py          # CLI : play / duel / train* / bench (--noise, --workers)
 ├── AUDIT.md         # audit du code : schémas d'architecture et plan d'amélioration
 ├── ROBOTS.md        # robots & IA vulgarisés : stratégies, combinatoire, résultats
 └── pyproject.toml   # dépendances gérées par uv (numpy, pygame)
@@ -84,18 +86,24 @@ Prérequis : Python ≥ 3.10 et [uv](https://docs.astral.sh/uv/).
 # installation (crée .venv et installe numpy + pygame d'après uv.lock)
 uv sync
 
-# session visuelle : n'importe lequel des 8 agents
+# session visuelle : n'importe lequel des 9 agents
 uv run python main.py --mode play --ai search --seed 3
 uv run python main.py --mode play --ai mcts
-uv run python main.py --mode play --ai nn            # nécessite un modèle entraîné
+
+# duel : deux agents côte à côte sur la même graine
+uv run python main.py --mode duel --ai search --ai2 mcts --seed 3
 
 # entraînements headless (chacun sauvegarde son modèle dans models/)
-uv run python main.py --mode train --generations 100 --curriculum   # neuroévolution
-uv run python main.py --mode train-dqn --episodes 800               # Q-learning
-uv run python main.py --mode train-clone                            # imitation (clone+guided)
+uv run python main.py --mode train --generations 100 --curriculum --workers 4
+uv run python main.py --mode train-dqn --episodes 800
+uv run python main.py --mode train-ppo
+uv run python main.py --mode train-clone
 
 # comparatif headless multi-graines de tous les agents disponibles
 uv run python main.py --mode bench --episodes 25
+
+# monde STOCHASTIQUE (turbulences ±1) : le match retour des planificateurs
+uv run python main.py --mode bench --episodes 25 --noise 0.1
 ```
 
 > Sans uv : `pip install numpy pygame` puis `python main.py ...` fonctionne aussi.
@@ -197,13 +205,17 @@ uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 ```
 
 Résultats observés (25 graines, tous les tableaux détaillés dans
-[ROBOTS.md](ROBOTS.md)) : les planificateurs exacts `search`, `search+` et `guided`
-gagnent **toutes** leurs parties ; le MCTS, planificateur approximatif, en gagne 16/25
-pour un coût 50 fois supérieur ; l'heuristique T+1 meurt entre 30 et 90 lignes ; et les
-trois IA (`nn`, `dqn`, `clone`) convergent vers le même plafond de ~5-6 lignes par trois
-voies d'apprentissage différentes — signe que la limite est la politique réactive
-elle-même, pas le signal d'entraînement. C'est précisément l'objet du comparatif :
-quand le futur est calculable, le calcul bat l'apprentissage.
+[ROBOTS.md](ROBOTS.md)) : en monde déterministe, les planificateurs exacts `search`,
+`search+` et `guided` gagnent **toutes** leurs parties, le MCTS 12/25 pour un coût ~50
+fois supérieur, et les quatre IA (`nn`, `dqn`, `ppo`, `clone`) convergent vers le même
+plafond de ~5-6 lignes par quatre voies d'apprentissage différentes — la limite est la
+politique réactive elle-même, pas le signal d'entraînement.
+
+En monde **stochastique** (`--noise 0.1`), le rapport de force bascule : `search`
+s'effondre de 200 à 47 (0 victoire), le MCTS ne fait pas mieux (son simulateur interne
+est trompé lui aussi), tandis que les IA traversent le changement de régime sans
+broncher. Quand le futur est calculable, le calcul bat l'apprentissage ; quand il ne
+l'est plus, la robustesse statistique reprend ses droits.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.
