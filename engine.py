@@ -13,6 +13,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+import numpy as np
+
 from config import (
     Action,
     CAR_LENGTH,
@@ -59,11 +61,14 @@ class Line:
         """Décalage cumulé de la ligne au tick t (avant modulo)."""
         return self.direction * (tick // self.period)
 
-    def occupied(self, tick: int) -> frozenset[int]:
-        """Colonnes occupées par les obstacles mobiles au tick t (formule modulo)."""
+    def occupied(self, tick: int, extra_shift: int = 0) -> frozenset[int]:
+        """Colonnes occupées par les obstacles mobiles au tick t (formule modulo).
+
+        extra_shift : décalage additionnel (turbulence du monde stochastique).
+        """
         if self.spacing == 0:
             return EMPTY
-        shift = self.shift(tick)
+        shift = self.shift(tick) + extra_shift
         cols: set[int] = set()
         for i in range(GRID_WIDTH // self.spacing):
             start = (self.phase + i * self.spacing + shift) % GRID_WIDTH
@@ -79,9 +84,17 @@ class Engine:
     peuvent donc projeter l'avenir via `next_state` sans muter l'état réel.
     """
 
-    def __init__(self, seed: int = 0, line_weights: dict[int, float] | None = None) -> None:
+    def __init__(
+        self,
+        seed: int = 0,
+        line_weights: dict[int, float] | None = None,
+        noise: float = 0.0,
+    ) -> None:
         self.seed = seed
         self.line_weights = dict(line_weights or LINE_WEIGHTS)  # profil de génération
+        self.noise = noise  # proba/tick/ligne d'un décalage aléatoire persistant
+        self.noise_rng = random.Random((seed + 1) * 7919)  # flux séparé de la génération
+        self._noise_offsets: dict[int, int] = {}
         self.rng = random.Random(seed)
         self.width = GRID_WIDTH
         self.tick = 0
@@ -95,7 +108,10 @@ class Engine:
         self.lines: list[Line] = []
         self.trees: set[tuple[int, int]] = set()
         self._trees_by_row: dict[int, frozenset[int]] = {}
-        self._occ_cache: dict[tuple[int, int], frozenset[int]] = {}
+        self._occ_cache: dict[tuple[int, int, int], frozenset[int]] = {}
+        # tables précalculées par ligne (capteurs vectorisés) : (occ, dl, dr, tto, ttf)
+        self._tables: dict[int, tuple[np.ndarray, ...]] = {}
+        self._tree_dists: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._consecutive_rivers = 0
         self._ensure_lines(SEARCH_HORIZON + START_SAFE_ROWS)
 
@@ -166,16 +182,99 @@ class Engine:
 
         L'occupation est périodique de période `period * width` : la clé de
         cache (y, tick % cycle) borne la mémoire tout en restant exacte.
+        En monde stochastique, le décalage de turbulence courant s'ajoute :
+        les prédictions futures utilisent le décalage CONNU au moment du
+        calcul — la réalité peut diverger, c'est le but.
         """
         line = self.line_at(y)
         if line.spacing == 0:
             return EMPTY
-        key = (y, tick % (line.period * self.width))
+        offset = self._noise_offsets.get(y, 0)
+        key = (y, tick % (line.period * self.width), offset)
         cached = self._occ_cache.get(key)
         if cached is None:
-            cached = line.occupied(tick)
+            cached = line.occupied(tick, extra_shift=offset)
             self._occ_cache[key] = cached
         return cached
+
+    def _apply_noise(self) -> None:
+        """Turbulence : chaque ligne mobile active peut glisser de ±1 case."""
+        for y in range(max(0, self.player_y - 5), self.player_y + 26):
+            line = self.line_at(y)
+            if line.spacing and self.noise_rng.random() < self.noise:
+                self._noise_offsets[y] = (
+                    self._noise_offsets.get(y, 0) + self.noise_rng.choice((-1, 1))
+                ) % self.width
+
+    def noise_offset(self, y: int) -> int:
+        """Décalage de turbulence courant de la ligne y (0 en monde déterministe)."""
+        return self._noise_offsets.get(y, 0)
+
+    def line_tables(self, y: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Tables précalculées de la ligne mobile y, sur son cycle exact.
+
+        (occ, dist_gauche, dist_droite, tto, ttf) — formes (cycle, largeur).
+        occ : bool ; distances en cases (255 = aucune) ; tto/ttf : délai en
+        ticks avant occupation / libération de la colonne (255 = jamais).
+        Invariantes par décalage : lire la colonne (x - offset) % largeur.
+        """
+        tables = self._tables.get(y)
+        if tables is None:
+            tables = self._build_tables(self.line_at(y))
+            self._tables[y] = tables
+        return tables
+
+    def _build_tables(self, line: Line) -> tuple[np.ndarray, ...]:
+        w = self.width
+        cycle = line.period * w
+        occ = np.zeros((cycle, w), dtype=bool)
+        for t in range(cycle):
+            for c in line.occupied(t):
+                occ[t, c] = True
+        xs = np.arange(w)
+        dl = np.full((cycle, w), 255, dtype=np.uint8)
+        dr = np.full((cycle, w), 255, dtype=np.uint8)
+        for t in range(cycle):
+            idx = np.flatnonzero(occ[t])
+            if idx.size:
+                d_right = (idx[None, :] - xs[:, None]) % w
+                d_right = np.where(d_right == 0, w, d_right).min(axis=1)
+                dr[t] = np.where(d_right < w, d_right, 255).astype(np.uint8)
+                d_left = (xs[:, None] - idx[None, :]) % w
+                d_left = np.where(d_left == 0, w, d_left).min(axis=1)
+                dl[t] = np.where(d_left < w, d_left, 255).astype(np.uint8)
+        tto = np.full((cycle, w), 255, dtype=np.uint8)
+        ttf = np.full((cycle, w), 255, dtype=np.uint8)
+        ts = np.arange(cycle)
+        for x in range(w):
+            col = occ[:, x]
+            for target, table in ((True, tto), (False, ttf)):
+                times = np.flatnonzero(col == target)
+                if times.size:
+                    pos = np.searchsorted(times, ts) % times.size
+                    table[:, x] = ((times[pos] - ts) % cycle).astype(np.uint8)
+        return occ, dl, dr, tto, ttf
+
+    def tree_dists(self, y: int) -> tuple[np.ndarray, np.ndarray]:
+        """Distances gauche/droite aux arbres de la ligne SAFE y (255 = aucun)."""
+        dists = self._tree_dists.get(y)
+        if dists is None:
+            w = self.width
+            xs = np.arange(w)
+            idx = np.fromiter(self.tree_columns(y), dtype=np.int64)
+            if idx.size:
+                d_right = (idx[None, :] - xs[:, None]) % w
+                d_right = np.where(d_right == 0, w, d_right).min(axis=1)
+                dr = np.where(d_right < w, d_right, 255).astype(np.uint8)
+                d_left = (xs[:, None] - idx[None, :]) % w
+                d_left = np.where(d_left == 0, w, d_left).min(axis=1)
+                dl = np.where(d_left < w, d_left, 255).astype(np.uint8)
+            else:
+                dl = np.full(w, 255, dtype=np.uint8)
+                dr = np.full(w, 255, dtype=np.uint8)
+            dists = (dl, dr)
+            self._tree_dists[y] = dists
+        return dists
 
     def get_obstacles_at_tick(
         self, tick: int, y_min: int | None = None, y_max: int | None = None
@@ -234,6 +333,8 @@ class Engine:
         """Avance le monde de t à t+1 en appliquant l'action. Retourne `alive`."""
         if not self.alive or self.won:
             return self.alive
+        if self.noise > 0.0:
+            self._apply_noise()  # la turbulence précède la transition t -> t+1
         x, y, alive = self.next_state(self.player_x, self.player_y, self.tick, action)
         self.tick += 1
         self.player_x, self.player_y, self.alive = x, y, alive
@@ -267,6 +368,10 @@ class Engine:
         other = object.__new__(Engine)
         other.seed = self.seed
         other.line_weights = dict(self.line_weights)
+        other.noise = self.noise
+        other.noise_rng = random.Random()
+        other.noise_rng.setstate(self.noise_rng.getstate())
+        other._noise_offsets = dict(self._noise_offsets)
         other.rng = random.Random()
         other.rng.setstate(self.rng.getstate())
         other.width = self.width
@@ -282,5 +387,7 @@ class Engine:
         other.trees = set(self.trees)
         other._trees_by_row = dict(self._trees_by_row)
         other._occ_cache = self._occ_cache
+        other._tables = self._tables  # tables immuables : partage sûr
+        other._tree_dists = self._tree_dists
         other._consecutive_rivers = self._consecutive_rivers
         return other
