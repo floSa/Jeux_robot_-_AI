@@ -7,6 +7,7 @@ individu = Y maximal atteint (moyenné sur plusieurs épisodes). Évolution par
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 from typing import Callable
 
@@ -72,6 +73,18 @@ class NeuralAI(BaseAI):
             probs = softmax(logits / self.temperature)
             return ACTIONS[int(self.rng.choice(len(ACTIONS), p=probs))]
         return ACTIONS[int(np.argmax(logits))]
+
+
+def _eval_genome(
+    args: tuple[np.ndarray, tuple[int, ...], float, dict[int, float] | None, bool],
+) -> float:
+    """Évaluation d'un génome — fonction de module, compatible multiprocessing."""
+    genome, seeds, temperature, line_weights, shaped = args
+    total = 0.0
+    for s in seeds:
+        score, ticks = GeneticTrainer.run_episode(genome, s, temperature, line_weights)
+        total += score + (FITNESS_SURVIVAL_BONUS * ticks if shaped else 0.0)
+    return total / len(seeds)
 
 
 # ------------------------------------------------------------- persistance
@@ -140,11 +153,7 @@ class GeneticTrainer:
         Le bonus (0,005/tick) reste très inférieur à une ligne franchie : il
         densifie le signal en début d'évolution sans récompenser le camping.
         """
-        total = 0.0
-        for s in seeds:
-            score, ticks = self.run_episode(genome, s, temperature, line_weights)
-            total += score + (FITNESS_SURVIVAL_BONUS * ticks if shaped else 0.0)
-        return total / len(seeds)
+        return _eval_genome((genome, seeds, temperature, line_weights, shaped))
 
     # -- opérateurs génétiques ----------------------------------------------
 
@@ -172,6 +181,7 @@ class GeneticTrainer:
         generations: int,
         log: Callable[[str], None] = print,
         curriculum: bool = False,
+        workers: int = 0,
     ) -> tuple[np.ndarray, float]:
         """Fait évoluer la population ; retourne (meilleur génome, score validé).
 
@@ -179,17 +189,35 @@ class GeneticTrainer:
         s'entraînent sur des mondes sans rivière (routes seules), puis mixtes.
         L'entraînement échantillonne en softmax (TRAIN_TEMPERATURE) ; la
         validation est toujours en argmax, mondes complets, score brut.
+        workers > 1 : évaluation de la population en parallèle (résultats
+        strictement identiques au séquentiel, tout l'aléa est tiré ici).
         """
+        pool = multiprocessing.Pool(workers) if workers > 1 else None
+        try:
+            return self._evolve(generations, log, curriculum, pool)
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
+
+    def _evolve(
+        self,
+        generations: int,
+        log: Callable[[str], None],
+        curriculum: bool,
+        pool: "multiprocessing.pool.Pool | None",
+    ) -> tuple[np.ndarray, float]:
         cutoff = int(generations * CURRICULUM_FRACTION) if curriculum else 0
         for gen in range(generations):
             weights = CURRICULUM_WEIGHTS if gen < cutoff else None
             seeds = tuple(int(s) for s in self.rng.integers(0, 100_000, self.episodes))
-            fits = np.array(
-                [
-                    self.fitness(g, seeds, TRAIN_TEMPERATURE, weights)
-                    for g in self.population
-                ]
-            )
+            jobs = [
+                (g, seeds, TRAIN_TEMPERATURE, weights, True) for g in self.population
+            ]
+            if pool is not None:
+                fits = np.array(pool.map(_eval_genome, jobs, chunksize=4))
+            else:
+                fits = np.array([_eval_genome(j) for j in jobs])
             order = np.argsort(fits)[::-1]
             champion = self.population[order[0]]
 
