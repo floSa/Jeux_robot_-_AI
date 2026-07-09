@@ -5,27 +5,31 @@ Différence fondamentale avec la neuroévolution : au lieu d'un signal terminal
 une récompense dense, par équation de Bellman :
 Q(s, a) <- r + gamma^n * max_a' Q_cible(s', a').
 
-Version 2 — chaque ajout répond à une cause identifiée dans ANALYSE_IA.md :
-- récompense POTENTIELLE (shaping.py) : signal immédiat pour entrer sur un
-  tronc ou esquiver une voiture imminente (cause 2, signal creux) ;
-- MÉMOIRE : pile des FRAME_STACK dernières observations (cause 3, politique
-  réactive sans état interne) ;
-- DOUBLE DQN : l'action suivante est choisie par le réseau en ligne mais
-  évaluée par le réseau cible, contre la surestimation des valeurs dans un
-  monde mortel (cause 1, variance des états irréversibles) ;
-- retours MULTI-PAS (n = DQN_NSTEP) : le crédit d'une traversée remonte n fois
-  plus vite le long de la trajectoire (cause 2) ;
-- CURRICULUM rivières : une part des épisodes d'entraînement sur-échantillonne
-  les rivières, la sous-tâche la plus dure (cause 2) ;
-- replay en tampon circulaire numpy : échantillonnage O(batch), entraînement
-  long sans coût caché.
+Cinq briques issues de la littérature sont implémentées et PILOTÉES PAR LA
+CONFIG, chacune visant une cause identifiée dans ANALYSE_IA.md :
+- récompense POTENTIELLE (RL_SHAPING, shaping.py) : signal immédiat pour
+  entrer sur un tronc ou esquiver une voiture imminente (cause 2) ;
+- MÉMOIRE (FRAME_STACK > 1) : pile des K dernières observations (cause 3) ;
+- DOUBLE DQN (DQN_DOUBLE) : l'action suivante est choisie par le réseau en
+  ligne mais évaluée par le réseau cible, contre la surestimation (cause 1) ;
+- retours MULTI-PAS (DQN_NSTEP > 1) : le crédit remonte n fois plus vite (cause 2) ;
+- CURRICULUM rivières (DQN_CURRICULUM_PROB > 0) : sur-échantillonner la
+  sous-tâche la plus dure à l'entraînement (cause 2).
 
-Ingrédients classiques conservés : replay (décorrélation), réseau cible
-synchronisé (stabilité), epsilon-greedy décroissant (exploration).
+Verdict d'ablation (voir ANALYSE_IA.md) : à notre budget (~10^5 pas), aucune
+de ces briques ne bat la recette simple — les défauts de config reflètent la
+mesure, pas la théorie. Le levier qui marche : entraînement multi-graines
+(`train_multi`) avec sélection sur validation, car l'issue varie du simple
+au double selon la graine.
+
+Ingrédients classiques : replay en tampon circulaire numpy (décorrélation,
+échantillonnage O(batch)), réseau cible synchronisé (stabilité),
+epsilon-greedy décroissant (exploration).
 """
 
 from __future__ import annotations
 
+import multiprocessing
 import random
 from typing import Callable
 
@@ -38,6 +42,7 @@ from config import (
     DQN_BUFFER_SIZE,
     DQN_CURRICULUM_PROB,
     DQN_CURRICULUM_WEIGHTS,
+    DQN_DOUBLE,
     DQN_EPS_DECAY,
     DQN_EPS_END,
     DQN_EPS_START,
@@ -52,13 +57,14 @@ from config import (
     FRAME_STACK,
     NN_INPUT_SIZE,
     NN_OUTPUT_SIZE,
+    RL_SHAPING,
     VALIDATION_SEEDS,
 )
 from engine import Engine
 from ai_base import BaseAI
 from neural import MLP, Layout
 from sensors import FrameStack, SENSOR_FULL_SIZE, sense_full as sense
-from shaping import potential, shaped_reward
+from shaping import base_reward, potential, shaped_reward
 
 DQN_LAYOUT: Layout = (NN_INPUT_SIZE * FRAME_STACK, DQN_HIDDEN_SIZE, NN_OUTPUT_SIZE)
 
@@ -183,9 +189,12 @@ class DQNTrainer:
     def _learn_step(self, gamma_n: float) -> None:
         s, a, r, s2, done = self.buffer.sample(DQN_BATCH_SIZE)
         rows = np.arange(len(a))
-        # Double DQN : l'en-ligne choisit, la cible évalue
-        a_next = np.argmax(self.online.forward(s2), axis=1)
-        q_next = self.target.forward(s2)[rows, a_next]
+        if DQN_DOUBLE:
+            # Double DQN : l'en-ligne choisit, la cible évalue (anti-surestimation)
+            a_next = np.argmax(self.online.forward(s2), axis=1)
+            q_next = self.target.forward(s2)[rows, a_next]
+        else:
+            q_next = self.target.forward(s2).max(axis=1)
         td_target = r + gamma_n * (1.0 - done) * q_next
         q = self.online.forward(s, cache=True)
         # perte MSE sur la seule action jouée : gradient nul ailleurs
@@ -226,7 +235,10 @@ class DQNTrainer:
                 action = self._epsilon_greedy(state, epsilon)
                 prev_score = engine.score
                 engine.step(ACTIONS[action])
-                reward, phi = shaped_reward(engine, prev_score, phi, DQN_GAMMA)
+                if RL_SHAPING:
+                    reward, phi = shaped_reward(engine, prev_score, phi, DQN_GAMMA)
+                else:
+                    reward = base_reward(engine, prev_score)
                 done = engine.game_over
                 next_state = (
                     stack.push(sense(engine)).astype(np.float32)
@@ -260,3 +272,40 @@ class DQNTrainer:
                     f"meilleur {self.best_score:5.1f} | buffer {len(self.buffer)}"
                 )
         return self.best_net, self.best_score
+
+
+# ---------------------------------------------------- entraînement multi-graines
+
+def _train_job(args: tuple[int, float, int]) -> tuple[int, float, np.ndarray]:
+    """Un entraînement complet — fonction de module, compatible multiprocessing."""
+    seed, world_noise, episodes = args
+    trainer = DQNTrainer(seed=seed, world_noise=world_noise)
+    net, val = trainer.train(episodes=episodes, log=lambda _s: None)
+    return seed, val, net.get_flat()
+
+
+def train_multi(
+    workers: int,
+    episodes: int = DQN_EPISODES,
+    world_noise: float = 0.0,
+    base_seed: int = 0,
+    log: Callable[[str], None] = print,
+) -> tuple[MLP, float]:
+    """`workers` entraînements indépendants en parallèle ; garde le mieux validé.
+
+    L'issue d'un entraînement par renforcement est très sensible à la graine
+    (initialisation du réseau + trajectoire d'exploration) : la même recette
+    donne du simple au triple d'une graine à l'autre. Entraîner plusieurs
+    graines et sélectionner sur la validation lisse cette variance — c'est le
+    levier le plus rentable mesuré sur ce projet (voir ANALYSE_IA.md).
+    """
+    jobs = [(base_seed + i, world_noise, episodes) for i in range(workers)]
+    best: tuple[float, int, np.ndarray] | None = None
+    with multiprocessing.Pool(workers) as pool:
+        for seed, val, flat in pool.imap_unordered(_train_job, jobs):
+            log(f"  graine {seed} : validation {val:.1f}")
+            if best is None or val > best[0]:
+                best = (val, seed, flat)
+    assert best is not None
+    log(f"  retenu : graine {best[1]} (validation {best[0]:.1f})")
+    return MLP(DQN_LAYOUT, flat=best[2]), best[0]

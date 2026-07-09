@@ -10,8 +10,16 @@ Exemples :
 
 from __future__ import annotations
 
-import argparse
 import os
+
+# Les matrices du projet sont minuscules (couches 42-128) : le multi-threading
+# BLAS coûte plus cher en synchronisation qu'il ne rapporte, et deux
+# entraînements simultanés s'effondrent par sur-souscription des cœurs.
+# À poser AVANT le premier import de numpy.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
+import argparse
 import random
 import statistics
 import time
@@ -39,8 +47,8 @@ from ai_base import BaseAI, HeuristicAI
 from ai_search import SearchAI
 from ai_mcts import MCTSAI
 from ai_genetic import GeneticTrainer, NeuralAI, save_genome
-from ai_qlearning import DQNAI, DQNTrainer
-from ai_ppo import PPOAI, PPOTrainer
+from ai_qlearning import DQNAI, DQNTrainer, train_multi as train_dqn_multi
+from ai_ppo import PPOAI, PPOTrainer, train_multi as train_ppo_multi
 from ai_hybrid import CloneAI, GuidedSearchAI, collect_dataset, train_policy
 
 if TYPE_CHECKING:
@@ -218,10 +226,20 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 
 def cmd_train_dqn(args: argparse.Namespace) -> None:
-    print(f"DQN : épisodes={args.episodes}, graine={args.seed}, bruit={args.noise}")
-    trainer = DQNTrainer(seed=args.seed, world_noise=args.noise)
+    print(
+        f"DQN : épisodes={args.episodes}, graine={args.seed}, bruit={args.noise}"
+        + (f", {args.workers} graines en parallèle" if args.workers > 1 else "")
+    )
     t0 = time.perf_counter()
-    net, score = trainer.train(episodes=args.episodes)
+    if args.workers > 1:
+        # variance d'entraînement élevée : N graines, on garde la mieux validée
+        net, score = train_dqn_multi(
+            args.workers, episodes=args.episodes,
+            world_noise=args.noise, base_seed=args.seed,
+        )
+    else:
+        trainer = DQNTrainer(seed=args.seed, world_noise=args.noise)
+        net, score = trainer.train(episodes=args.episodes)
     elapsed = time.perf_counter() - t0
     path = args.model or DQN_MODEL_PATH
     net.save(path)
@@ -232,10 +250,19 @@ def cmd_train_dqn(args: argparse.Namespace) -> None:
 
 
 def cmd_train_ppo(args: argparse.Namespace) -> None:
-    print(f"PPO : itérations={args.episodes}, graine={args.seed}, bruit={args.noise}")
-    trainer = PPOTrainer(seed=args.seed, world_noise=args.noise)
+    print(
+        f"PPO : itérations={args.episodes}, graine={args.seed}, bruit={args.noise}"
+        + (f", {args.workers} graines en parallèle" if args.workers > 1 else "")
+    )
     t0 = time.perf_counter()
-    net, score = trainer.train(iterations=args.episodes)
+    if args.workers > 1:
+        net, score = train_ppo_multi(
+            args.workers, iterations=args.episodes,
+            world_noise=args.noise, base_seed=args.seed,
+        )
+    else:
+        trainer = PPOTrainer(seed=args.seed, world_noise=args.noise)
+        net, score = trainer.train(iterations=args.episodes)
     elapsed = time.perf_counter() - t0
     path = args.model or PPO_MODEL_PATH
     net.save(path)
@@ -339,7 +366,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=IMITATION_SAMPLES,
                         help="exemples collectés pour l'imitation (mode train-clone)")
     parser.add_argument("--workers", type=int, default=0,
-                        help="processus parallèles pour l'évaluation du GA (0 = séquentiel)")
+                        help="processus parallèles : évaluation du GA (train), ou "
+                             "entraînements multi-graines dont on garde le mieux "
+                             "validé (train-dqn / train-ppo) ; 0 = séquentiel")
     parser.add_argument("--noise", type=float, default=0.0,
                         help="monde stochastique : proba/tick/ligne d'un décalage ±1 "
                              "(play, bench, duel)")

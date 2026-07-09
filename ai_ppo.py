@@ -14,6 +14,7 @@ pour rester comparable à armes égales avec lui.
 
 from __future__ import annotations
 
+import multiprocessing
 import random
 from typing import Callable
 
@@ -36,13 +37,14 @@ from config import (
     PPO_LR,
     PPO_MODEL_PATH,
     PPO_ROLLOUT,
+    RL_SHAPING,
     VALIDATION_SEEDS,
 )
 from engine import Engine
 from ai_base import BaseAI
 from neural import MLP, Layout, softmax
 from sensors import FrameStack, SENSOR_FULL_SIZE, sense_full as sense
-from shaping import potential, shaped_reward
+from shaping import base_reward, potential, shaped_reward
 
 PPO_INPUT_SIZE: int = NN_INPUT_SIZE * FRAME_STACK
 POLICY_LAYOUT: Layout = (PPO_INPUT_SIZE, PPO_HIDDEN_SIZE, NN_OUTPUT_SIZE)
@@ -115,9 +117,12 @@ class PPOTrainer:
             self._env.step(ACTIONS[a])
             states[i] = self._state
             actions[i] = a
-            rewards[i], self._phi = shaped_reward(
-                self._env, prev_score, self._phi, PPO_GAMMA
-            )
+            if RL_SHAPING:
+                rewards[i], self._phi = shaped_reward(
+                    self._env, prev_score, self._phi, PPO_GAMMA
+                )
+            else:
+                rewards[i] = base_reward(self._env, prev_score)
             dones[i] = float(self._env.game_over)
             logps[i] = float(np.log(probs[a] + 1e-12))
             self._state = (
@@ -222,3 +227,37 @@ class PPOTrainer:
                     f"validation {val:5.1f} | meilleur {self.best_score:5.1f}"
                 )
         return self.best_policy, self.best_score
+
+
+# ---------------------------------------------------- entraînement multi-graines
+
+def _train_job(args: tuple[int, float, int]) -> tuple[int, float, np.ndarray]:
+    """Un entraînement complet — fonction de module, compatible multiprocessing."""
+    seed, world_noise, iterations = args
+    trainer = PPOTrainer(seed=seed, world_noise=world_noise)
+    net, val = trainer.train(iterations=iterations, log=lambda _s: None)
+    return seed, val, net.get_flat()
+
+
+def train_multi(
+    workers: int,
+    iterations: int = PPO_ITERATIONS,
+    world_noise: float = 0.0,
+    base_seed: int = 0,
+    log: Callable[[str], None] = print,
+) -> tuple[MLP, float]:
+    """`workers` entraînements indépendants en parallèle ; garde le mieux validé.
+
+    Même logique de contrôle de variance que pour le DQN (ANALYSE_IA.md) : la
+    graine d'entraînement pèse plus que la plupart des hyperparamètres.
+    """
+    jobs = [(base_seed + i, world_noise, iterations) for i in range(workers)]
+    best: tuple[float, int, np.ndarray] | None = None
+    with multiprocessing.Pool(workers) as pool:
+        for seed, val, flat in pool.imap_unordered(_train_job, jobs):
+            log(f"  graine {seed} : validation {val:.1f}")
+            if best is None or val > best[0]:
+                best = (val, seed, flat)
+    assert best is not None
+    log(f"  retenu : graine {best[1]} (validation {best[0]:.1f})")
+    return MLP(POLICY_LAYOUT, flat=best[2]), best[0]
