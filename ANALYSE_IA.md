@@ -16,19 +16,20 @@ implémenté les remèdes de la littérature — avec un verdict d'ablation qui 
 |---|---:|---:|---|
 | `search` / `guided` | **200** | 200 | franchit tout (planification exacte) |
 | `mcts` | 134 | 200 | planification approximative |
+| `dqn` | **91** | 200 | vision grille : traverse tout, gagne 8/50 |
 | `heuristic` | 51 | 200 | glouton T+1, cale sur ce qui exige un plan |
-| `dqn` | **30** | 168 | seule IA qui traverse vraiment des rivières |
-| `clone` | 8 | 32 | imite `search`, plafonne au réflexe |
+| `clone` | **51** | 200 | imitation + DAgger en vision grille |
 | `ppo` | 7 | 33 | policy gradient |
 | `nn` | 5 | 10 | neuroévolution |
 
-*(Chiffres `dqn`/`ppo` = modèles réentraînés — voir Épisode 2. Ceux d'origine, qui ont
-motivé l'analyse ci-dessous, étaient dqn 13 / ppo 6.)*
+*(Chiffres `dqn`/`clone` = après l'Épisode 3 (vision grille) ; `ppo` = après l'Épisode 2.
+Ceux d'origine, qui ont motivé l'analyse ci-dessous : dqn 13, clone 8, ppo 6.)*
 
-Fait central : **quatre méthodes d'apprentissage très différentes plafonnent toutes très
-bas**, alors que la planification atteint 200. Ce n'est pas un bug de réglage : c'est que
-ce jeu réunit, d'un coup, la plupart des difficultés connues de l'apprentissage par
-renforcement (RL). On les passe en revue.
+Fait central au départ : **quatre méthodes d'apprentissage très différentes plafonnaient
+toutes très bas** (dqn 13, clone 8, ppo 6, nn 5), alors que la planification atteint 200.
+Ce n'était pas un bug de réglage : ce jeu réunit, d'un coup, la plupart des difficultés
+connues de l'apprentissage par renforcement (RL). On les passe en revue — puis les
+Épisodes 2 et 3 racontent ce que chaque remède a réellement donné, jusqu'au déblocage.
 
 ## Pourquoi — cinq raisons, chacune documentée
 
@@ -200,6 +201,125 @@ score moyen sur 25 graines de bench jamais vues à l'entraînement) :
   *toute* la distribution (la pire des 10 graines bat l'ancien modèle), et la sélection
   prend la queue haute. Résultats officiels sur graines de bench dans [ROBOTS.md](ROBOTS.md).
 
+---
+
+# Épisode 3 — la vision en grille : la représentation était LE verrou
+
+L'Épisode 2 se concluait sur un constat un peu frustrant : les remèdes
+*algorithmiques* de la littérature ne payaient pas. L'hypothèse suivante ne
+portait plus sur l'algorithme mais sur **ce que l'agent perçoit** : il faut
+qu'il puisse *se projeter sur la grille* — voir où sont les passages, et où
+ils seront.
+
+## Le diagnostic qui a tout déclenché
+
+Au bench, le DQN 42-capteurs mourait à **66 % par stagnation** (33/50), pas
+écrasé (28 %), pas noyé. Il ne mourait pas d'imprudence : il mourait **bloqué**.
+Or ses capteurs agrégés (distance au plus proche obstacle à gauche/droite,
+par ligne) ont deux angles morts exactement là :
+
+1. **Cécité latérale** : si le trou dans la ligne d'arbres est à 5 colonnes,
+   « distance au plus proche obstacle » ne dit pas de quel côté ni où aller.
+2. **État non markovien** : la mort par stagnation (120 ticks sans progrès)
+   était *invisible* dans l'observation — une politique argmax bloquée restait
+   donc bloquée pour l'éternité, sans même « sentir » l'urgence.
+
+## Le nouveau capteur : praticabilité projetée dans l'espace-temps
+
+`sense_grid` remplace les agrégats par la donnée brute organisée : pour 6
+lignes autour du joueur, une carte égocentrique de **praticabilité** des 19
+colonnes (herbe sans arbre, route sans véhicule, rivière AVEC tronc/nénuphar),
+calculée aux instants **t, t+1, t+2, t+3** — le monde est périodique, la
+projection est *exacte* et de la même classe d'information que les capteurs
+de phase (tto/ttf) déjà présents. S'y ajoutent le type et la vitesse de chaque
+ligne, et le **compteur de stagnation** normalisé (complétude Markov). Au
+total 482 entrées au lieu de 42 ; la décision reste un unique passage avant
+du réseau (~0,07 ms) — **aucune recherche, aucune triche** : c'est la
+représentation en grille standard des travaux RL sur Frogger/Crossy Road
+[12][13], enrichie de la projection temporelle que notre monde périodique
+permet de rendre exacte.
+
+Chaque brique a été validée par invariants sur 1446 états (la case sous le
+joueur vivant est toujours praticable ; cohérence bit à bit avec les tables
+occ/tto du moteur).
+
+## Verdict expérimental (4000 épisodes, 2 graines, bench 25 graines)
+
+| Variante | Score bench (moyenne 2 graines) |
+|---|---:|
+| base 42 capteurs (référence) | 15,9 |
+| + compteur de stagnation seul | 13,4 |
+| vision grille, praticabilité à t seul | 22,4 |
+| vision grille projetée t..t+3 | 78,0 |
+| **vision projetée + potentiel d'alignement** | **83,4** |
+| vision projetée, 128 neurones | 66,6 |
+
+Quatre leçons :
+
+1. **La représentation était le verrou — pas l'algorithme.** Même DQN, mêmes
+   hyperparamètres, même budget : ×5 en changeant uniquement ce que le réseau
+   *voit*. À 4000 épisodes seulement, l'agent vision-grille dépasse déjà
+   l'`heuristic` (51) et signe les **premières victoires (Y = 200) d'une IA**
+   du projet.
+2. **La projection temporelle est l'ingrédient décisif** : vision spatiale
+   seule 22, spatio-temporelle 78. Voir où sont les trous ne suffit pas ;
+   il faut voir où ils *seront*.
+3. **Un signal de récompense ne vaut que si l'agent peut voir ce qu'il
+   récompense.** Le shaping potentiel, neutre avec les capteurs agrégés
+   (Épisode 2), devient utile et STABILISANT (83,4, écart inter-graines
+   réduit) une fois la cible visible : le potentiel d'alignement pousse vers
+   le passage praticable de la ligne suivante — l'anti-stagnation exact.
+   Interaction représentation x récompense.
+4. **La capacité double nuit toujours** (66,6) — cohérent avec l'Épisode 2 :
+   à petit budget, les paramètres supplémentaires coûtent plus qu'ils ne
+   rapportent.
+
+## Campagne finale et résultats officiels
+
+Recette livrée : `DQN_SENSOR="grid"`, `RL_SHAPING="alignement"`, 64 neurones,
+et la procédure multi-graines de l'Épisode 2 (10 graines × 12 000 épisodes,
+sélection sur validation — 15 minutes de calcul). Les dix graines valident
+entre **131 et 153,5** ; la veille, même procédure avec les capteurs agrégés :
+25 à 38,8. Bench officiel (50 graines jamais vues à l'entraînement) :
+
+| `dqn` | 42 capteurs, 4 000 ép. | 42 capteurs, multi-graines | **vision grille** |
+|---|---:|---:|---:|
+| score moyen | 13,1 | 29,8 | **91,3** |
+| médiane | 12 | 22 | **78** |
+| record | 75 | 168 | **200** |
+| victoires | 0/50 | 0/50 | **8/50** |
+
+Le diagnostic initial est **validé par les causes de mort** : les stagnations
+passent de 33/50 à **3/50**. L'agent qui voit où est le passage ne reste plus
+bloqué devant — il meurt désormais en jouant (collisions, noyades), pas en
+hésitant.
+
+## Bonus — l'imitation explose aussi (clone en vision grille + DAgger)
+
+Le supervisé profite encore plus de la représentation que le RL (il est bien
+plus efficace en échantillons). Trois paliers mesurés :
+
+| `clone` | bench | précision |
+|---|---:|---:|
+| imitation pure, 42 capteurs | 7,8 | 73 % |
+| imitation pure, vision grille | 28,8 | 87 % |
+| + 2 tours **DAgger** [14] | **51,4** (record 200, 1 victoire) | 86 % (équilibrée 65 → 77 %) |
+
+DAgger corrige LE défaut structurel de l'imitation : l'élève n'apprenait que
+sur les états que le maître visite, donc jamais à se rattraper quand il
+s'égare. En rejouant la politique de l'ÉLÈVE et en faisant étiqueter ses
+états par l'expert, le clone égale désormais l'`heuristic` (51) — un pur
+réflexe, sans une seule recherche au moment de jouer.
+
+## La leçon de l'Épisode 3
+
+Les cinq causes de l'analyse initiale étaient réelles, mais la hiérarchie
+était ailleurs : **avant l'algorithme, la représentation**. Un DQN standard,
+sans une seule brique exotique, passe de 13 à 91 quand on lui donne à voir ce
+que le problème demande de voir. Reste l'écart avec `search` (200) : le
+réflexe voit 4 ticks devant, la recherche 15 — combler cet écart demanderait
+d'élargir le cône visible ou d'hybrider (piste AlphaZero, toujours ouverte).
+
 ## Références
 
 1. *Learning to Undo: Rollback-Augmented RL with Reversibility Signals* — [arXiv:2510.14503](https://arxiv.org/abs/2510.14503v1)
@@ -213,3 +333,6 @@ score moyen sur 25 graines de bench jamais vues à l'entraînement) :
 9. *DISCOVER: Automated Curricula for Sparse-Reward RL* — [arXiv:2505.19850](https://arxiv.org/html/2505.19850v2)
 10. Ng, Harada & Russell, *Policy invariance under reward transformations: Theory and application to reward shaping* (ICML 1999) — le shaping potentiel F = γΦ(s′) − Φ(s) ne change pas la politique optimale.
 11. Henderson et al., *Deep Reinforcement Learning that Matters* — [arXiv:1709.06560](https://arxiv.org/abs/1709.06560) : la variance entre graines d'entraînement domine souvent l'effet des méthodes comparées.
+12. *Comparing Learning Algorithms for Crossy Road* (Stanford CS221) — [poster](https://web.stanford.edu/class/archive/cs/cs221/cs221.1192/2018/restricted/posters/nwrubin/poster.pdf) : le défi central est une représentation d'état « assez riche sans exploser l'espace d'états ».
+13. *CrossyRoadPlayer : DDQN et A3C sur Crossy Road* — [GitHub](https://github.com/Introduction-to-Machine-Learning-Team4/CrossyRoadPlayer) : observation en grille (7 lignes × 21 cases) autour du joueur, l'approche standard.
+14. Ross, Gordon & Bagnell, *A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning* (DAgger) — [arXiv:1011.0686](https://arxiv.org/abs/1011.0686) : faire étiqueter par l'expert les états visités par l'élève corrige le décalage de distribution de l'imitation.

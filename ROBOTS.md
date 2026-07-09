@@ -140,11 +140,20 @@ temporelle adaptative pour ne jamais dépasser le budget.
 
 # Deuxième famille : les IA (apprentissage)
 
-Les quatre IA lisent les mêmes **42 capteurs** : distances gauche/droite aux obstacles sur
-5 lignes, type de ligne (one-hot), vitesse signée, position X, flag « sur un tronc », et
-— nouveauté décisive — la **phase** : pour chaque ligne, le délai avant que la case du
-joueur soit occupée puis libérée. C'est l'information temporelle que `search` calcule via
-la formule modulo ; sans elle, un réseau ne peut pas savoir *quand* sauter.
+Deux générations de capteurs coexistent (le bon jeu est choisi automatiquement d'après le
+modèle chargé) :
+
+- **42 capteurs agrégés** (`nn`, `ppo`) : distances gauche/droite aux obstacles sur
+  5 lignes, type de ligne (one-hot), vitesse signée, position X, flag « sur un tronc », et
+  la **phase** — pour chaque ligne, le délai avant que la case du joueur soit occupée puis
+  libérée.
+- **Vision grille** (`dqn`, `clone`) : la carte égocentrique de **praticabilité** des
+  19 colonnes sur 6 lignes, **projetée aux instants t à t+3** (le monde est périodique :
+  la projection est exacte, même classe d'information que la phase), + type/vitesse par
+  ligne + compteur de stagnation. 482 entrées au lieu de 42 : l'agent *voit* où sont les
+  passages et où ils seront, au lieu d'un résumé en distances. Ce changement de
+  représentation a multiplié les scores par 5 à 7 — l'histoire complète est l'Épisode 3
+  d'[ANALYSE_IA.md](ANALYSE_IA.md).
 
 ## `nn` — la neuroévolution (sélection darwinienne)
 
@@ -170,16 +179,23 @@ d'apprentissage dense** au lieu du seul score final. Le réseau (42 → 64 → 5
 classiques, tous en numpy pur : replay buffer circulaire (100 000 transitions), réseau
 cible synchronisé, ε-greedy décroissant, Adam sur perte TD.
 
-**C'est la seule IA qui traverse réellement des rivières**, et elle a bénéficié de deux
-chantiers successifs. D'abord la capacité et l'entraînement long (déjà ~2,5× la v1).
-Ensuite un chantier « littérature » complet : récompense potentielle, mémoire par pile
-d'observations, retours multi-pas, curriculum rivières, Double DQN — tous implémentés,
-tous pilotables par la config… et tous mesurés par **ablation** comme neutres à nuisibles
-à notre budget d'entraînement (l'histoire complète, contre-intuitive et sourcée, est dans
-[ANALYSE_IA.md](ANALYSE_IA.md)). Ce qui a réellement payé : constater que **la graine
-d'entraînement fait varier le score final du simple au double**, et donc entraîner
-**10 graines en parallèle** (10 000 épisodes chacune, `--workers 10`) en gardant la mieux
-validée sur des graines fixes.
+**C'est l'IA vedette du projet : 91,3 de moyenne et 8 victoires sur 50**, au terme de
+trois chantiers successifs qui sont autant de leçons :
+
+1. **Capacité + entraînement long + multi-graines** (13 → 30) : la graine d'entraînement
+   fait varier le score du simple au double, donc 10 entraînements en parallèle
+   (`--workers 10`) et on garde le mieux validé.
+2. **Les briques « littérature »** (récompense potentielle, mémoire par pile, retours
+   multi-pas, curriculum rivières, Double DQN) : toutes implémentées, toutes pilotables
+   par la config… et toutes mesurées par **ablation** comme neutres à nuisibles à notre
+   budget. Le remède n'était pas algorithmique.
+3. **La vision grille** (30 → 91) : remplacer les 42 capteurs agrégés par la carte de
+   praticabilité des 19 colonnes **projetée aux instants t..t+3**, plus le compteur de
+   stagnation (sans lui, l'état n'était même pas markovien). Même DQN, mêmes
+   hyperparamètres : ×3. Le shaping d'« alignement » (se rapprocher du passage de la
+   ligne suivante rapporte tout de suite) devient utile une fois la cible visible.
+
+L'histoire complète, chiffrée et sourcée, est dans [ANALYSE_IA.md](ANALYSE_IA.md).
 
 ## `ppo` — le policy gradient (l'algorithme de référence du RL moderne)
 
@@ -210,11 +226,21 @@ entraîné à **imiter `search`** comme un élève copie un maître. La recette,
    calcul de réseau (~10 µs), **sans aucune recherche**.
 
 L'intérêt scientifique : `search` explore ~400 états par décision ; le clone tente de
-compresser tout ce raisonnement en un réflexe instantané. Sa précision (il rejoue ~78 % des
-coups du maître) et son score en jeu mesurent la part de la décision de `search` qui est
-« compressible » en réflexe — et la part qui exige irréductiblement de calculer. Réponse :
-il imite bien coup par coup mais reste faible en jeu (~6 lignes), car une seule erreur
-devant une rivière est fatale, et le réflexe ne rattrape pas comme le fait la recherche.
+compresser tout ce raisonnement en un réflexe instantané. Sa précision et son score en jeu
+mesurent la part de la décision de `search` qui est « compressible » en réflexe.
+
+Longtemps la réponse fut décevante (~8 lignes) : il imitait bien coup par coup, mais une
+seule erreur devant une rivière est fatale. Deux changements l'ont métamorphosé
+(**7,8 → 51,4**, record 200) :
+
+1. **La vision grille** (précision 73 → 87 %) : la décision du maître devient une fonction
+   bien plus apprenable de l'observation.
+2. **DAgger** (Ross et al., 2011) : l'imitation pure n'apprend que sur les états que le
+   *maître* visite — or le maître ne s'égare jamais, donc l'élève n'apprend jamais à se
+   rattraper. DAgger rejoue la politique de l'ÉLÈVE et fait étiqueter ses états par
+   l'expert : l'élève apprend à réparer *ses propres* erreurs. Mesuré : 28,8 en imitation
+   pure sur la grille, **51,4 avec 2 tours de DAgger** — le clone égale l'`heuristic`, en
+   réflexe pur, sans une seule recherche au moment de jouer.
 
 ---
 
@@ -263,9 +289,10 @@ problème a une solution.
 
 # Résultats — bench officiel (50 graines identiques pour tous)
 
-`uv run python main.py --mode bench --episodes 50` (réseaux : nn 32, dqn/ppo 64 neurones
-cachés ; entraînements : dqn **10 graines × 10 000 épisodes** puis sélection sur validation,
-ppo 6 graines × 1500 itérations, GA 400 générations) :
+`uv run python main.py --mode bench --episodes 50` (entraînements : dqn **vision grille,
+10 graines × 12 000 épisodes** puis sélection sur validation ; clone **imitation 60 000
+exemples + 2 tours DAgger** en vision grille ; ppo 6 graines × 1500 itérations ; GA 400
+générations) :
 
 Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes**) :
 
@@ -275,13 +302,13 @@ Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes*
 | `search` | robot | **200** | 200 | 200 | **50/50** | 0,31 |
 | `mcts` | robot | 134,3 | 200 | 200 | 25/50 | 14,0 |
 | `nn` | IA | 4,7 | 4 | 10 | 0/50 | 0,45 |
-| `dqn` | IA | **29,8** | 22 | **168** | 0/50 | 0,10 |
+| `dqn` | IA | **91,3** | 78 | **200** | **8/50** | 0,28 |
 | `ppo` | IA | 7,0 | 5 | 33 | 0/50 | 0,38 |
-| `clone` | IA | 7,8 | 6 | 32 | 0/50 | 0,30 |
-| `guided` | hybride | **200** | 200 | 200 | **50/50** | 0,87 |
+| `clone` | IA | **51,4** | 40 | **200** | 1/50 | 0,36 |
+| `guided` | hybride | **200** | 200 | 200 | **50/50** | 1,42 |
 
-*(`dqn` et `ppo` : modèles réentraînés par la procédure multi-graines — voir
-[ANALYSE_IA.md](ANALYSE_IA.md), Épisode 2. Les autres agents sont inchangés.)*
+*(`dqn` et `clone` : vision grille — Épisode 3 d'[ANALYSE_IA.md](ANALYSE_IA.md) ;
+`ppo` : multi-graines de l'Épisode 2. `heuristic`, `search`, `mcts`, `nn` inchangés.)*
 
 Lecture — quatre enseignements :
 
@@ -297,15 +324,14 @@ Lecture — quatre enseignements :
    des nénuphars a d'ailleurs fait redescendre son score (97 → 51) : ce qui coûte à un agent
    myope, c'est tout ce qui exige un plan, pas la variété en soi.
 
-3. **Le DQN est de loin le seul apprenant qui décolle** (**29,8**, record **168**) — il
-   traverse réellement des rivières, là où `nn` (4,7), `ppo` (7,0) et `clone` (7,8) stagnent.
-   La leçon tient : les apprenants par **gradient** profitent de la capacité et de
-   l'entraînement long, l'**évolution** (nn) n'en profite pas, l'**imitation** (clone)
-   plafonne au niveau du réflexe. Le bond de 13 à 30 ne vient pas d'une brique sophistiquée
-   mais d'un entraînement plus long **et** du contrôle de la variance inter-graines (le même
-   entraînement varie de ~50 % selon la graine — validations de 25 à 39 sur la campagne, d'où
-   10 graines en parallèle et on garde la mieux validée). « Inutile » est devenu « joueur
-   solide » — mais loin des 200 exacts.
+3. **Le DQN gagne désormais des parties** (**91,3** de moyenne, médiane 78, **8 victoires
+   sur 50**) et le `clone` égale l'`heuristic` (51,4, une victoire) — en réflexe pur, sans
+   recherche au moment de jouer. Le déblocage n'est venu ni d'un meilleur algorithme ni d'un
+   réglage : c'est la **vision grille** (voir la praticabilité des 19 colonnes projetée à
+   t..t+3) qui a tout changé — dqn 13 → 30 par l'entraînement multi-graines, puis → **91**
+   par la représentation. Preuve par les causes de mort : les stagnations passent de 33/50
+   à 3/50. L'`évolution` (nn, 4,7) et le policy gradient (ppo, 7,0), restés aux capteurs
+   agrégés, n'ont pas bougé — le contraste est la démonstration.
 
 4. **La hiérarchie reste une hiérarchie d'horizon** : T+1 (heuristic, 51) < rollouts
    aléatoires (mcts, 134) < T+15 exact (search, 200). Plus on anticipe loin et juste, plus on
@@ -335,33 +361,33 @@ Sous bruit 0,1 (mêmes 50 graines, mêmes modèles qu'en déterministe) :
 |---|---|---:|---:|---:|---:|
 | `heuristic` | robot | 51,4 → 18,3 | 13 | 75 | 0/50 |
 | `search` | robot | **200 → 27,8** | 20 | 115 | 0/50 |
-| `guided` | hybride | 200 → 23,1 | 17 | 108 | 0/50 |
+| `guided` | hybride | 200 → 21,7 | 18 | 80 | 0/50 |
 | `mcts` | robot | 134,3 → 17,3 | 12 | 75 | 0/50 |
-| `dqn` | IA | 29,8 → **14,4** | 12 | 44 | 0/50 |
-| `clone` | IA | 7,8 → 8,0 | 6 | 27 | 0/50 |
+| `dqn` | IA | 91,3 → 18,0 | 13 | 88 | 0/50 |
+| `clone` | IA | 51,4 → **19,2** | 16 | 61 | 0/50 |
 | `ppo` | IA | 7,0 → 6,3 | 5 | 18 | 0/50 |
 | `nn` | IA | 4,7 → 4,8 | 4 | 10 | 0/50 |
 
 Trois enseignements :
 
 1. **L'oracle brisé fait s'effondrer les planificateurs.** `search` perd 86 % de son score
-   (200 → 28), `guided` de même (→ 23) ; leurs plans à 15 coups sont démentis par les
+   (200 → 28), `guided` de même (→ 22) ; leurs plans à 15 coups sont démentis par les
    turbulences. Le MCTS ne prend pas l'avantage (17,3 < 27,8) : sous incertitude, calculer
    juste reste légèrement devant l'échantillonnage, mais tout le monde souffre.
 
-2. **Sous bruit, l'écart planificateurs/IA se referme presque entièrement.** En déterministe,
-   le meilleur robot (200) écrase la meilleure IA (dqn 30) d'un facteur ~7. Sous bruit, ce
-   facteur tombe à **moins de 2** : `search` 28, `dqn` **14,4** devant le `mcts` (17,3 — le DQN
-   n'est plus qu'à quelques longueurs) et `heuristic` (18,3). Autrement dit, **quand le futur
-   n'est plus calculable, le DQN devient un vrai concurrent des planificateurs** — c'est le
-   régime où l'apprentissage a le plus de valeur relative.
+2. **Sous bruit, tout le monde se retrouve dans un mouchoir de poche.** En déterministe,
+   `search` (200) garde un facteur ~2 sur la meilleure IA (dqn 91). Sous bruit : `search`
+   27,8, puis `guided` 21,7, `clone` **19,2**, `heuristic` 18,3, `dqn` 18,0, `mcts` 17,3 —
+   cinq approches radicalement différentes entre 17 et 22. Quand le futur n'est plus
+   calculable, ni la planification exacte ni le réflexe appris ne gardent d'avantage
+   décisif : c'est l'incertitude elle-même qui plafonne tout le monde.
 
-3. **Le DQN encaisse mieux le changement de régime qu'avant**, mais il a désormais plus à
-   perdre : entraîné en monde propre, il passe de 29,8 à 14,4 (les rivières qu'il franchissait
-   par timing exact deviennent des pièges — la part de « noyade » explose). Les IA plus faibles
-   restent, elles, imperturbables (clone 7,8 → 8,0 ; nn 4,7 → 4,8), parce que leurs réflexes
-   n'ont jamais reposé sur la précision du futur. (Sur un monde précédent on avait aussi testé
-   un entraînement *dans* le bruit : il n'aidait pas — le bruit dégrade le signal d'apprentissage
+3. **Plus une IA exploite le déterminisme, plus le bruit lui coûte.** Le dqn vision-grille
+   passe de 91 à 18 et le clone de 51 à 19 : leurs projections t+1..t+3, exactes en monde
+   propre, deviennent des promesses trahies (la part de « noyade » explose — 27/50 pour le
+   dqn). Les IA aux capteurs agrégés, qui n'ont jamais rien exploité de précis, ne bronchent
+   pas (nn 4,7 → 4,8 ; ppo 7,0 → 6,3)… mais ne partaient de rien. (Un entraînement *dans* le
+   bruit avait déjà été testé : il n'aide pas — le bruit dégrade le signal d'apprentissage
    plus qu'il ne forge une robustesse.)
 
 # Reproduire les expériences

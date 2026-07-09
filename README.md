@@ -11,9 +11,9 @@ plusieurs types d'intelligences artificielles sur un terrain identique :
 | `search` | robot | best-first élagué avec mémoization (type A*), horizon réglable `--horizon` |
 | `mcts` | robot | UCT mono-joueur, rollouts sous budget 15 ms |
 | `nn` | IA | MLP entraîné par neuroévolution (shaping, softmax, curriculum) |
-| `dqn` | IA | Q-learning profond, récompense dense, replay buffer |
+| `dqn` | IA | Q-learning profond en **vision grille** (praticabilité projetée t..t+3) |
 | `ppo` | IA | policy gradient actor-critic (surrogate clippé, GAE) |
-| `clone` | IA | imitation du planificateur (distillation de `search`) |
+| `clone` | IA | imitation du planificateur en vision grille + tours DAgger |
 | `guided` | hybride | recherche A* départagée par la politique apprise |
 
 **Robots** = algorithmes déterministes écrits à la main (ils calculent) ; **IA** =
@@ -38,20 +38,21 @@ décrites plus bas.
 Crossy_Road/
 ├── config.py        # constantes globales (grille, actions, physique, hyperparamètres)
 ├── engine.py        # moteur de simulation pur : ticks, obstacles, collisions, clone()
-├── sensors.py       # capteurs partagés des agents apprenants (base + phase)
+├── sensors.py       # capteurs des agents apprenants (agrégés + vision grille projetée)
 ├── neural.py        # MLP numpy : forward, rétropropagation, Adam, génome plat
 ├── ai_base.py       # interface BaseAI (familles robot/ia/hybride) + heuristique T+1
 ├── ai_search.py     # recherche prédictive, horizon réglable (heapq + mémoization)
 ├── ai_mcts.py       # MCTS mono-joueur sous budget (robot)
 ├── ai_genetic.py    # neuroévolution : GA, shaping, softmax, curriculum, --workers
-├── ai_qlearning.py  # DQN : replay buffer, réseau cible, epsilon-greedy
+├── ai_qlearning.py  # DQN : replay circulaire, réseau cible, options mesurées, --workers
 ├── ai_ppo.py        # PPO : actor-critic, surrogate clippé, GAE
-├── ai_hybrid.py     # imitation du planificateur (clone) + recherche guidée
+├── ai_hybrid.py     # imitation du planificateur (clone, DAgger) + recherche guidée
+├── shaping.py       # récompenses potentielles (plateforme, alignement)
 ├── ui.py            # monitoring Pygame (rendu 2D + HUD + duel), aucune logique de jeu
 ├── main.py          # CLI : play / duel / train* / bench (--noise, --workers)
 ├── AUDIT.md         # audit du code : schémas d'architecture et plan d'amélioration
 ├── ROBOTS.md        # robots & IA vulgarisés : stratégies, combinatoire, résultats
-├── ANALYSE_IA.md    # pourquoi les IA sont faibles (sourcé) + plan d'amélioration
+├── ANALYSE_IA.md    # l'enquête IA en 3 épisodes : causes, ablations, déblocage (sourcé)
 └── pyproject.toml   # dépendances gérées par uv (numpy, pygame)
 ```
 
@@ -216,21 +217,21 @@ uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 Résultats observés (50 graines, monde complet avec routes, troncs mobiles et nénuphars
 fixes ; tableaux détaillés dans [ROBOTS.md](ROBOTS.md)) : en monde déterministe, les
 planificateurs exacts `search` et `guided` gagnent **toutes** leurs parties (50/50), le
-MCTS la moitié pour un coût ~50 fois supérieur. Côté apprentissage, le **DQN est de loin la
-seule IA à décoller** (**30 de moyenne, record 168** — il traverse vraiment des rivières),
-les autres restant basses. Ce niveau vient d'un entraînement long **et** du contrôle de la
-variance inter-graines (10 entraînements en parallèle, on garde le mieux validé), pas d'une
-recette exotique. **Pourquoi les IA plafonnent-elles quand même sous les planificateurs, et
-que donnent les remèdes de la littérature une fois réellement implémentés et mesurés ?**
-L'analyse sourcée et le verdict d'ablation (contre-intuitif) sont dans
-[ANALYSE_IA.md](ANALYSE_IA.md).
+MCTS la moitié pour un coût ~50 fois supérieur. Côté apprentissage, le **DQN atteint 91 de
+moyenne et gagne 8 parties sur 50** (médiane 78, record 200), et le clone par imitation
+égale l'heuristique (51, record 200) — en réflexe pur, sans recherche au moment de jouer.
+Le déblocage n'est pas venu d'un meilleur algorithme mais de la **représentation** : une
+« vision grille » égocentrique de la praticabilité des cases, **projetée aux instants
+t..t+3** (le monde périodique rend la projection exacte), plus DAgger pour l'imitation.
+L'enquête complète — pourquoi les IA plafonnaient, ce que les remèdes de la littérature ont
+réellement donné (verdict d'ablation contre-intuitif), et le déblocage par la vision — est
+dans [ANALYSE_IA.md](ANALYSE_IA.md).
 
 En monde **stochastique** (`--noise 0.1`), les planificateurs s'effondrent (`search`
-200 → 28) : le futur qu'ils calculaient n'est plus fiable. Surtout, **l'écart avec les IA se
-referme presque entièrement** (search 28 contre DQN 14) — quand le futur n'est plus
-calculable, l'apprentissage redevient un concurrent sérieux de la planification. Quand le
-futur est calculable, le calcul exact domine largement ; quand il ne l'est plus, l'écart se
-referme.
+200 → 28) et tout le monde se retrouve dans un mouchoir : cinq approches radicalement
+différentes entre 17 et 22. Plus un agent exploitait le déterminisme (projections exactes,
+plans à 15 coups), plus le bruit lui coûte ; quand le futur n'est plus calculable, ni la
+planification ni le réflexe appris ne gardent d'avantage décisif.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.
