@@ -157,11 +157,14 @@ MCTS_FORWARD_BIAS: Final[float] = 0.5         # proba d'essayer AVANCER d'abord 
 
 # --- Imitation (clone du planificateur) + recherche guidée ---
 POLICY_MODEL_PATH: Final[str] = "models/policy.npz"
-POLICY_HIDDEN_SIZE: Final[int] = 32
+IMITATION_SENSOR: Final[str] = "grid"         # vision grille : précision 73 -> 87 %
+POLICY_HIDDEN_SIZE: Final[int] = 64
 IMITATION_SAMPLES: Final[int] = 60_000
 IMITATION_EPOCHS: Final[int] = 12
 IMITATION_LR: Final[float] = 1e-3
 IMITATION_BATCH: Final[int] = 128
+DAGGER_ROUNDS: Final[int] = 2                 # tours DAgger (l'élève conduit, l'expert étiquette)
+DAGGER_SAMPLES: Final[int] = 30_000           # exemples collectés par tour
 GUIDED_PRIOR_DEPTH: Final[int] = 2            # profondeur max où le prior guide le tri
 
 # --- UI ---

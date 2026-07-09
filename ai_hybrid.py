@@ -4,14 +4,21 @@ Idée (patron AlphaZero en miniature) : la recherche exhaustive `search` est un
 expert parfait mais coûteux en nœuds ; on la DISTILLE dans un petit réseau.
 
 1. Dataset : on rejoue des parties de `search` et on enregistre, à chaque tick,
-   (capteurs complets de l'état, coup choisi par l'expert).
+   (capteurs de l'état, coup choisi par l'expert).
 2. Politique : MLP entraîné par entropie croisée à prédire le coup de l'expert.
-3. `clone` (IA) : joue directement la politique — un réflexe distillé, sans
+3. DAgger (Ross et al., 2011) : on rejoue ensuite la politique de l'ÉLÈVE et
+   on fait étiqueter ses états par l'expert — l'imitation pure ne voit jamais
+   les situations où l'élève s'égare, DAgger lui apprend à s'en sortir.
+   Mesuré : bench 29 (imitation pure) -> 56 (2 tours DAgger).
+4. `clone` (IA) : joue directement la politique — un réflexe distillé, sans
    aucune recherche au moment de jouer.
-4. `guided` (hybride) : la recherche A* garde sa borne admissible, mais le
+5. `guided` (hybride) : la recherche A* garde sa borne admissible, mais le
    départage des ex æquo près de la racine suit la politique au lieu de la
    distance au centre. Objectif mesuré : réduire les nœuds explorés. Le
    résultat, positif ou négatif, est documenté dans ROBOTS.md.
+
+Les capteurs d'entraînement suivent IMITATION_SENSOR (vision grille par
+défaut : précision 73 -> 87 %) ; à l'inférence ils sont déduits du modèle.
 """
 
 from __future__ import annotations
@@ -24,12 +31,14 @@ from config import (
     ACTIONS,
     Action,
     CENTER_X,
+    DAGGER_ROUNDS,
+    DAGGER_SAMPLES,
     GUIDED_PRIOR_DEPTH,
     IMITATION_BATCH,
     IMITATION_EPOCHS,
     IMITATION_LR,
     IMITATION_SAMPLES,
-    NN_INPUT_SIZE,
+    IMITATION_SENSOR,
     NN_OUTPUT_SIZE,
     POLICY_HIDDEN_SIZE,
     POLICY_MODEL_PATH,
@@ -39,9 +48,11 @@ from engine import Engine
 from ai_base import BaseAI
 from ai_search import SearchAI
 from neural import MLP, Layout, softmax
-from sensors import sense_full as sense
+from sensors import SENSOR_SETS, sensor_for_input
 
-POLICY_LAYOUT: Layout = (NN_INPUT_SIZE, POLICY_HIDDEN_SIZE, NN_OUTPUT_SIZE)
+# jeu de capteurs de l'ENTRAÎNEMENT (l'inférence se déduit du modèle chargé)
+SENSE, SENSOR_SIZE = SENSOR_SETS[IMITATION_SENSOR]
+POLICY_LAYOUT: Layout = (SENSOR_SIZE, POLICY_HIDDEN_SIZE, NN_OUTPUT_SIZE)
 
 
 # ------------------------------------------------------------------- dataset
@@ -60,7 +71,7 @@ def collect_dataset(
         engine = Engine(seed=seed)
         while not engine.game_over and len(xs) < samples:
             move = expert.get_move(engine)
-            xs.append(sense(engine))
+            xs.append(SENSE(engine))
             ys.append(ACTIONS.index(move))
             engine.step(move)
         seed += 1
@@ -75,6 +86,36 @@ def collect_dataset(
         + f" (sur {len(y)})"
     )
     return x, y
+
+
+def collect_dagger(
+    net: MLP,
+    samples: int = DAGGER_SAMPLES,
+    base_seed: int = 40_000,
+    log: Callable[[str], None] = print,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Tour DAgger (Ross et al., 2011) : l'ÉLÈVE conduit, l'expert étiquette.
+
+    L'imitation pure n'apprend que sur les états que le maître visite ; dès
+    que l'élève dévie, il se retrouve dans des situations jamais vues et
+    enchaîne les erreurs (décalage de distribution). Ici on rejoue la
+    politique du réseau élève et on note, à chaque état VISITÉ PAR LUI, le
+    coup que `search` aurait joué : l'élève apprend à se rattraper.
+    """
+    xs: list[np.ndarray] = []
+    ys: list[int] = []
+    expert = SearchAI()
+    seed = base_seed
+    while len(xs) < samples:
+        engine = Engine(seed=seed)
+        while not engine.game_over and len(xs) < samples:
+            obs = SENSE(engine)
+            xs.append(obs)
+            ys.append(ACTIONS.index(expert.get_move(engine)))
+            engine.step(ACTIONS[int(np.argmax(net.forward(obs)))])  # l'élève conduit
+        seed += 1
+    log(f"  DAgger : {len(xs)} états de l'élève étiquetés par l'expert")
+    return np.stack(xs), np.asarray(ys, dtype=np.int64)
 
 
 # ---------------------------------------------------------------- imitation
@@ -147,7 +188,11 @@ def train_policy(
 # ------------------------------------------------------------------- agents
 
 class CloneAI(BaseAI):
-    """IA par imitation : le réflexe distillé du planificateur, sans recherche."""
+    """IA par imitation : le réflexe distillé du planificateur, sans recherche.
+
+    Le jeu de capteurs est déduit de la taille d'entrée du réseau chargé
+    (anciens modèles 42 capteurs toujours jouables).
+    """
 
     name = "clone"
     family = "ia"
@@ -155,13 +200,14 @@ class CloneAI(BaseAI):
     def __init__(self, net: MLP) -> None:
         super().__init__()
         self.net = net
+        self.sense, _k = sensor_for_input(net.layout[0])
 
     @classmethod
     def from_file(cls, path: str = POLICY_MODEL_PATH) -> "CloneAI":
         return cls(MLP.load(path))
 
     def get_move(self, game_state: Engine) -> Action:
-        logits = self.net.forward(sense(game_state))
+        logits = self.net.forward(self.sense(game_state))
         return ACTIONS[int(np.argmax(logits))]
 
 
@@ -180,6 +226,7 @@ class GuidedSearchAI(SearchAI):
     def __init__(self, net: MLP, horizon: int = SEARCH_HORIZON) -> None:
         super().__init__(horizon)
         self.net = net
+        self.sense, _k = sensor_for_input(net.layout[0])
         self._prior_cache: dict[tuple[int, int, int], np.ndarray] = {}
         self._engine: Engine | None = None
 
@@ -194,7 +241,7 @@ class GuidedSearchAI(SearchAI):
         key = (px, py, depth)
         probs = self._prior_cache.get(key)
         if probs is None:
-            state = sense(self._engine, px, py, self._engine.tick + depth)
+            state = self.sense(self._engine, px, py, self._engine.tick + depth)
             probs = softmax(self.net.forward(state))
             self._prior_cache[key] = probs
         return float(1.0 - probs[action_idx])

@@ -25,8 +25,11 @@ import statistics
 import time
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from config import (
     AI_TIME_BUDGET_MS,
+    DAGGER_ROUNDS,
     DEFAULT_GENERATIONS,
     DQN_EPISODES,
     DQN_MODEL_PATH,
@@ -49,7 +52,13 @@ from ai_mcts import MCTSAI
 from ai_genetic import GeneticTrainer, NeuralAI, save_genome
 from ai_qlearning import DQNAI, DQNTrainer, train_multi as train_dqn_multi
 from ai_ppo import PPOAI, PPOTrainer, train_multi as train_ppo_multi
-from ai_hybrid import CloneAI, GuidedSearchAI, collect_dataset, train_policy
+from ai_hybrid import (
+    CloneAI,
+    GuidedSearchAI,
+    collect_dagger,
+    collect_dataset,
+    train_policy,
+)
 
 if TYPE_CHECKING:
     from ui import Renderer
@@ -273,10 +282,18 @@ def cmd_train_ppo(args: argparse.Namespace) -> None:
 
 
 def cmd_train_clone(args: argparse.Namespace) -> None:
-    print(f"imitation du planificateur : {args.samples} exemples")
+    print(
+        f"imitation du planificateur : {args.samples} exemples"
+        + (f" + {DAGGER_ROUNDS} tours DAgger" if DAGGER_ROUNDS else "")
+    )
     t0 = time.perf_counter()
     x, y = collect_dataset(samples=args.samples)
     net, accuracy = train_policy(x, y, seed=args.seed)
+    for round_ in range(1, DAGGER_ROUNDS + 1):
+        print(f"  tour DAgger {round_}/{DAGGER_ROUNDS} (l'élève conduit, l'expert étiquette)")
+        nx, ny = collect_dagger(net, base_seed=40_000 + 1_000 * round_)
+        x, y = np.concatenate((x, nx)), np.concatenate((y, ny))
+        net, accuracy = train_policy(x, y, seed=args.seed + round_)
     elapsed = time.perf_counter() - t0
     path = args.model or POLICY_MODEL_PATH
     net.save(path)
