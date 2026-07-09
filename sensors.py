@@ -18,6 +18,8 @@ décalage de turbulence courant s'applique par translation de colonne.
 
 from __future__ import annotations
 
+from collections import deque
+
 import numpy as np
 
 from config import (
@@ -122,3 +124,34 @@ def sense_full(
             continue
         phase.extend(_phase(engine, x, ly, tick))
     return np.concatenate((base, np.asarray(phase, dtype=np.float64)))
+
+
+class FrameStack:
+    """Mémoire courte : concatène les K dernières observations (ancien -> récent).
+
+    Réponse à la cause n°3 de l'analyse (politique réactive sans mémoire) :
+    empiler les K derniers vecteurs de capteurs donne au réseau les dérivées
+    temporelles (une plateforme qui approche, une voiture qui accélère…) sans
+    passer à une architecture récurrente. Au premier pas d'un épisode, la
+    première observation est répétée K fois (démarrage neutre). K = 1 est
+    l'identité : les modèles sans mémoire restent chargeables tels quels.
+    """
+
+    def __init__(self, k: int) -> None:
+        if k < 1:
+            raise ValueError(f"pile de {k} observations (minimum 1)")
+        self.k = k
+        self._frames: deque[np.ndarray] = deque(maxlen=k)
+
+    def reset(self) -> None:
+        self._frames.clear()
+
+    def push(self, obs: np.ndarray) -> np.ndarray:
+        """Ajoute l'observation du tick et retourne l'état empilé."""
+        if self.k == 1:
+            return obs
+        if not self._frames:
+            self._frames.extend([obs] * self.k)
+        else:
+            self._frames.append(obs)
+        return np.concatenate(self._frames)

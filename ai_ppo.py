@@ -7,8 +7,9 @@ contraint à [1-eps, 1+eps]) — l'algorithme de référence du RL moderne.
 
 Acteur (politique softmax) et critique (valeur d'état) séparés, avantages
 estimés par GAE(lambda), bonus d'entropie contre l'effondrement prématuré.
-Mêmes capteurs (42) et même récompense dense que le DQN : les quatre signaux
-d'apprentissage du projet sont ainsi comparables à armes égales.
+Version 2 : mêmes remèdes que le DQN (voir ANALYSE_IA.md) — récompense
+POTENTIELLE (shaping.py) et MÉMOIRE (pile de FRAME_STACK observations) —
+pour rester comparable à armes égales avec lui.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import numpy as np
 from config import (
     ACTIONS,
     Action,
+    FRAME_STACK,
     NN_INPUT_SIZE,
     NN_OUTPUT_SIZE,
     PPO_BATCH,
@@ -34,23 +36,25 @@ from config import (
     PPO_LR,
     PPO_MODEL_PATH,
     PPO_ROLLOUT,
-    REWARD_DEATH,
-    REWARD_PROGRESS,
-    REWARD_STEP,
-    REWARD_WIN,
     VALIDATION_SEEDS,
 )
 from engine import Engine
 from ai_base import BaseAI
 from neural import MLP, Layout, softmax
-from sensors import sense_full as sense
+from sensors import FrameStack, SENSOR_FULL_SIZE, sense_full as sense
+from shaping import potential, shaped_reward
 
-POLICY_LAYOUT: Layout = (NN_INPUT_SIZE, PPO_HIDDEN_SIZE, NN_OUTPUT_SIZE)
-VALUE_LAYOUT: Layout = (NN_INPUT_SIZE, PPO_HIDDEN_SIZE, 1)
+PPO_INPUT_SIZE: int = NN_INPUT_SIZE * FRAME_STACK
+POLICY_LAYOUT: Layout = (PPO_INPUT_SIZE, PPO_HIDDEN_SIZE, NN_OUTPUT_SIZE)
+VALUE_LAYOUT: Layout = (PPO_INPUT_SIZE, PPO_HIDDEN_SIZE, 1)
 
 
 class PPOAI(BaseAI):
-    """Politique gloutonne (argmax) sur l'acteur appris."""
+    """Politique gloutonne (argmax) sur l'acteur appris.
+
+    La profondeur de mémoire K est déduite du réseau chargé : les anciens
+    modèles sans mémoire (K = 1) restent jouables.
+    """
 
     name = "ppo"
     family = "ia"
@@ -58,14 +62,19 @@ class PPOAI(BaseAI):
     def __init__(self, net: MLP) -> None:
         super().__init__()
         self.net = net
+        self.stack = FrameStack(max(1, net.layout[0] // SENSOR_FULL_SIZE))
 
     @classmethod
     def from_file(cls, path: str = PPO_MODEL_PATH) -> "PPOAI":
         return cls(MLP.load(path))
 
     def get_move(self, game_state: Engine) -> Action:
-        logits = self.net.forward(sense(game_state))
+        logits = self.net.forward(self.stack.push(sense(game_state)))
         return ACTIONS[int(np.argmax(logits))]
+
+    def reset(self) -> None:
+        super().reset()
+        self.stack.reset()
 
 
 class PPOTrainer:
@@ -79,23 +88,16 @@ class PPOTrainer:
         self.value = MLP(VALUE_LAYOUT, seed=seed + 1)
         self.best_policy = self.policy.copy()
         self.best_score = float("-inf")
-        # environnement persistant entre rollouts
+        # environnement persistant entre rollouts (+ mémoire et potentiel associés)
         self._env: Engine | None = None
         self._state: np.ndarray | None = None
+        self._stack = FrameStack(FRAME_STACK)
+        self._phi = 0.0
 
     # -------------------------------------------------------------- collecte
 
-    @staticmethod
-    def _reward(engine: Engine, prev_score: int) -> float:
-        r = REWARD_STEP + REWARD_PROGRESS * (engine.score - prev_score)
-        if engine.won:
-            r += REWARD_WIN
-        elif not engine.alive:
-            r += REWARD_DEATH
-        return r
-
     def _rollout(self, n_steps: int) -> dict[str, np.ndarray]:
-        states = np.empty((n_steps, NN_INPUT_SIZE))
+        states = np.empty((n_steps, PPO_INPUT_SIZE))
         actions = np.empty(n_steps, dtype=np.int64)
         rewards = np.empty(n_steps)
         dones = np.empty(n_steps)
@@ -103,7 +105,9 @@ class PPOTrainer:
         for i in range(n_steps):
             if self._env is None or self._env.game_over:
                 self._env = Engine(seed=self.rng.randrange(1_000_000), noise=self.world_noise)
-                self._state = sense(self._env)
+                self._stack.reset()
+                self._state = self._stack.push(sense(self._env))
+                self._phi = potential(self._env)
             assert self._state is not None
             probs = softmax(self.policy.forward(self._state))
             a = int(self.np_rng.choice(NN_OUTPUT_SIZE, p=probs))
@@ -111,11 +115,15 @@ class PPOTrainer:
             self._env.step(ACTIONS[a])
             states[i] = self._state
             actions[i] = a
-            rewards[i] = self._reward(self._env, prev_score)
+            rewards[i], self._phi = shaped_reward(
+                self._env, prev_score, self._phi, PPO_GAMMA
+            )
             dones[i] = float(self._env.game_over)
             logps[i] = float(np.log(probs[a] + 1e-12))
             self._state = (
-                sense(self._env) if not self._env.game_over else np.zeros(NN_INPUT_SIZE)
+                self._stack.push(sense(self._env))
+                if not self._env.game_over
+                else np.zeros(PPO_INPUT_SIZE)
             )
         return {
             "s": states, "a": actions, "r": rewards, "done": dones, "logp": logps
@@ -184,9 +192,9 @@ class PPOTrainer:
     # ------------------------------------------------------------ évaluation
 
     def evaluate(self, seeds: tuple[int, ...] = VALIDATION_SEEDS) -> float:
-        agent = PPOAI(self.policy)
         scores = []
         for seed in seeds:
+            agent = PPOAI(self.policy)  # pile de mémoire neuve par graine
             engine = Engine(seed=seed, noise=self.world_noise)
             while not engine.game_over:
                 engine.step(agent.get_move(engine))

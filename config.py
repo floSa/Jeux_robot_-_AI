@@ -79,7 +79,8 @@ CROSSOVER_RATE: Final[float] = 0.9
 MUTATION_RATE: Final[float] = 0.10
 MUTATION_SIGMA: Final[float] = 0.30
 EPISODES_PER_EVAL: Final[int] = 3
-VALIDATION_SEEDS: Final[tuple[int, ...]] = (9001, 9002, 9003, 9004, 9005)
+# 10 graines : la sélection du « meilleur modèle » est moins sensible à la chance
+VALIDATION_SEEDS: Final[tuple[int, ...]] = tuple(range(9001, 9011))
 DEFAULT_GENERATIONS: Final[int] = 60
 MODEL_PATH: Final[str] = "models/best.npz"
 FITNESS_SURVIVAL_BONUS: Final[float] = 0.005  # shaping : bonus/tick survécu (<< 1 ligne)
@@ -87,18 +88,27 @@ TRAIN_TEMPERATURE: Final[float] = 0.5         # softmax d'exploration à l'entra
 CURRICULUM_FRACTION: Final[float] = 0.4       # part des générations sur mondes sans rivière
 CURRICULUM_WEIGHTS: Final[dict[int, float]] = {SAFE: 0.35, ROAD: 0.65, RIVER: 0.0}
 
+# --- IA v2 : mémoire + récompense potentielle (voir ANALYSE_IA.md) ---
+FRAME_STACK: Final[int] = 4                   # pile des K dernières observations (mémoire)
+PHI_PLATFORM: Final[float] = 0.3              # potentiel : vivant sur tronc/nénuphar
+PHI_DANGER: Final[float] = 0.2                # potentiel : voiture imminente sur ma case
+PHI_DANGER_HORIZON: Final[int] = 8            # ticks sous lesquels le danger « se sent »
+
 # --- DQN ---
-DQN_HIDDEN_SIZE: Final[int] = 64
+DQN_HIDDEN_SIZE: Final[int] = 128
 DQN_LR: Final[float] = 1e-3
 DQN_GAMMA: Final[float] = 0.97
 DQN_EPS_START: Final[float] = 1.0
 DQN_EPS_END: Final[float] = 0.05
-DQN_EPS_DECAY: Final[float] = 0.999           # décroissance par épisode (entraînement long)
+DQN_EPS_DECAY: Final[float] = 0.9995          # décroissance par épisode (entraînement long)
 DQN_BUFFER_SIZE: Final[int] = 100_000
 DQN_BATCH_SIZE: Final[int] = 64
 DQN_TRAIN_EVERY: Final[int] = 2               # 1 mise à jour tous les 2 pas
 DQN_TARGET_SYNC: Final[int] = 1000            # synchronisation du réseau cible (pas)
-DQN_EPISODES: Final[int] = 4000
+DQN_EPISODES: Final[int] = 20_000
+DQN_NSTEP: Final[int] = 3                     # retours multi-pas (crédit plus rapide)
+DQN_CURRICULUM_PROB: Final[float] = 0.3       # part d'épisodes « rivières denses »
+DQN_CURRICULUM_WEIGHTS: Final[dict[int, float]] = {SAFE: 0.35, ROAD: 0.10, RIVER: 0.55}
 DQN_MODEL_PATH: Final[str] = "models/dqn.npz"
 REWARD_PROGRESS: Final[float] = 1.0           # nouvelle ligne max franchie
 REWARD_STEP: Final[float] = -0.01             # coût du temps
@@ -106,7 +116,7 @@ REWARD_DEATH: Final[float] = -1.0
 REWARD_WIN: Final[float] = 5.0
 
 # --- PPO ---
-PPO_HIDDEN_SIZE: Final[int] = 64
+PPO_HIDDEN_SIZE: Final[int] = 128
 PPO_LR: Final[float] = 3e-4
 PPO_GAMMA: Final[float] = 0.97
 PPO_LAMBDA: Final[float] = 0.95            # GAE
@@ -115,7 +125,7 @@ PPO_ROLLOUT: Final[int] = 4096             # pas collectés par itération
 PPO_EPOCHS: Final[int] = 4                 # passes d'optimisation par rollout
 PPO_BATCH: Final[int] = 256
 PPO_ENTROPY: Final[float] = 0.01           # bonus d'exploration
-PPO_ITERATIONS: Final[int] = 1500
+PPO_ITERATIONS: Final[int] = 2500
 PPO_MODEL_PATH: Final[str] = "models/ppo.npz"
 
 # --- MCTS (robot) ---
