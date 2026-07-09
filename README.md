@@ -98,8 +98,9 @@ uv run python main.py --mode duel --ai search --ai2 mcts --seed 3
 
 # entraînements headless (chacun sauvegarde son modèle dans models/)
 uv run python main.py --mode train --generations 400 --curriculum --workers 4
-uv run python main.py --mode train-dqn      # 4000 épisodes (le plus performant)
-uv run python main.py --mode train-ppo      # 1500 itérations (~25 min)
+uv run python main.py --mode train-dqn --workers 10   # 10 graines en parallèle,
+                                                      # garde la mieux validée (~5 min)
+uv run python main.py --mode train-ppo --workers 6    # idem, 6 graines (~15 min)
 uv run python main.py --mode train-clone
 
 # comparatif headless multi-graines de tous les agents disponibles
@@ -123,6 +124,9 @@ Arguments principaux :
 | `--generations` | train | générations du GA | `60` |
 | `--population` | train | taille de population | `100` |
 | `--episodes` | train, bench | épisodes par évaluation / par IA | `3` / `20` |
+| `--workers` | train, train-dqn, train-ppo | éval GA parallèle / entraînements multi-graines (garde le mieux validé) | `0` |
+| `--noise` | play, duel, bench, train* | monde stochastique (proba de turbulence ±1) | `0.0` |
+| `--horizon` | play, duel, bench | coups anticipés par `search` (1-30) | `15` |
 
 En mode `play`, la partie s'arrête à la mort du robot ou à `Y = 200` ; le HUD affiche l'IA
 active, le score, le tick, le temps de calcul du dernier coup (coloré selon le budget de
@@ -212,19 +216,21 @@ uv run python main.py --mode bench --episodes 25      # tableau comparatif final
 Résultats observés (50 graines, monde complet avec routes, troncs mobiles et nénuphars
 fixes ; tableaux détaillés dans [ROBOTS.md](ROBOTS.md)) : en monde déterministe, les
 planificateurs exacts `search` et `guided` gagnent **toutes** leurs parties (50/50), le
-MCTS la moitié pour un coût ~50 fois supérieur. Côté apprentissage, avec des réseaux
-musclés et un entraînement long, le **DQN est la seule IA à décoller** (13 de moyenne,
-record 75 — il traverse vraiment des rivières), les autres restant basses. **Pourquoi les IA
-plafonnent-elles si bas ?** Analyse détaillée et sourcée (environnement mortel, signal rare,
-politique sans mémoire, exploration faible) et plan d'amélioration priorisé dans
+MCTS la moitié pour un coût ~50 fois supérieur. Côté apprentissage, le **DQN est de loin la
+seule IA à décoller** (**30 de moyenne, record 168** — il traverse vraiment des rivières),
+les autres restant basses. Ce niveau vient d'un entraînement long **et** du contrôle de la
+variance inter-graines (10 entraînements en parallèle, on garde le mieux validé), pas d'une
+recette exotique. **Pourquoi les IA plafonnent-elles quand même sous les planificateurs, et
+que donnent les remèdes de la littérature une fois réellement implémentés et mesurés ?**
+L'analyse sourcée et le verdict d'ablation (contre-intuitif) sont dans
 [ANALYSE_IA.md](ANALYSE_IA.md).
 
 En monde **stochastique** (`--noise 0.1`), les planificateurs s'effondrent (`search`
-200 → 28) : le futur qu'ils calculaient n'est plus fiable. Surtout, **l'écart avec les IA
-fond d'un facteur 15 à ~2** (search 28 contre DQN 13) — quand le futur n'est plus
-calculable, l'apprentissage redevient un concurrent sérieux de la planification. Les IA,
-elles, ne bronchent pas au changement de régime. Quand le futur est calculable, le calcul
-exact domine largement ; quand il ne l'est plus, l'écart se referme.
+200 → 28) : le futur qu'ils calculaient n'est plus fiable. Surtout, **l'écart avec les IA se
+referme presque entièrement** (search 28 contre DQN 14) — quand le futur n'est plus
+calculable, l'apprentissage redevient un concurrent sérieux de la planification. Quand le
+futur est calculable, le calcul exact domine largement ; quand il ne l'est plus, l'écart se
+referme.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.

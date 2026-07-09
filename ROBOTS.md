@@ -167,14 +167,19 @@ La comparaison canonique avec la neuroévolution : mêmes capteurs, mais un **si
 d'apprentissage dense** au lieu du seul score final. Le réseau (42 → 64 → 5) apprend la
 *valeur* Q(état, action) par équation de Bellman : +1 par ligne nouvelle, −0,01 par tick,
 −1 à la mort, +5 à la victoire, propagés par récompense actualisée (γ = 0,97). Ingrédients
-classiques, tous en numpy pur : replay buffer (100 000 transitions), réseau cible
-synchronisé, ε-greedy décroissant, Adam sur perte TD.
+classiques, tous en numpy pur : replay buffer circulaire (100 000 transitions), réseau
+cible synchronisé, ε-greedy décroissant, Adam sur perte TD.
 
-**C'est la grande réussite du projet côté apprentissage.** Avec un réseau plus large et un
-entraînement long (4000 épisodes), le DQN passe de ~5 lignes (v1) à **33 de moyenne, record
-130** : il traverse réellement des rivières, seule IA à le faire. Il reste loin des 200 de
-`search`, mais « inutile » est devenu « joueur honnête » — la preuve que le plafond initial
-tenait à un sous-entraînement, pas à une limite de principe.
+**C'est la seule IA qui traverse réellement des rivières**, et elle a bénéficié de deux
+chantiers successifs. D'abord la capacité et l'entraînement long (déjà ~2,5× la v1).
+Ensuite un chantier « littérature » complet : récompense potentielle, mémoire par pile
+d'observations, retours multi-pas, curriculum rivières, Double DQN — tous implémentés,
+tous pilotables par la config… et tous mesurés par **ablation** comme neutres à nuisibles
+à notre budget d'entraînement (l'histoire complète, contre-intuitive et sourcée, est dans
+[ANALYSE_IA.md](ANALYSE_IA.md)). Ce qui a réellement payé : constater que **la graine
+d'entraînement fait varier le score final du simple au double**, et donc entraîner
+**10 graines en parallèle** (10 000 épisodes chacune, `--workers 10`) en gardant la mieux
+validée sur des graines fixes.
 
 ## `ppo` — le policy gradient (l'algorithme de référence du RL moderne)
 
@@ -256,11 +261,11 @@ problème a une solution.
 
 ---
 
-# Résultats — bench officiel (25 graines identiques pour tous)
+# Résultats — bench officiel (50 graines identiques pour tous)
 
-`uv run python main.py --mode bench --episodes 25` (réseaux musclés : nn 32, dqn/ppo 64
-neurones cachés ; entraînements longs : dqn 4000 épisodes, ppo 1500 itérations, GA 400
-générations) :
+`uv run python main.py --mode bench --episodes 50` (réseaux : nn 32, dqn/ppo 64 neurones
+cachés ; entraînements : dqn **10 graines × 10 000 épisodes** puis sélection sur validation,
+ppo 6 graines × 1500 itérations, GA 400 générations) :
 
 Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes**) :
 
@@ -270,10 +275,13 @@ Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes*
 | `search` | robot | **200** | 200 | 200 | **50/50** | 0,31 |
 | `mcts` | robot | 134,3 | 200 | 200 | 25/50 | 14,0 |
 | `nn` | IA | 4,7 | 4 | 10 | 0/50 | 0,45 |
-| `dqn` | IA | **13,1** | 12 | **75** | 0/50 | 0,12 |
-| `ppo` | IA | 6,4 | 5 | 23 | 0/50 | 0,40 |
+| `dqn` | IA | **29,8** | 22 | **168** | 0/50 | 0,10 |
+| `ppo` | IA | 7,0 | 5 | 33 | 0/50 | 0,38 |
 | `clone` | IA | 7,8 | 6 | 32 | 0/50 | 0,30 |
 | `guided` | hybride | **200** | 200 | 200 | **50/50** | 0,87 |
+
+*(`dqn` et `ppo` : modèles réentraînés par la procédure multi-graines — voir
+[ANALYSE_IA.md](ANALYSE_IA.md), Épisode 2. Les autres agents sont inchangés.)*
 
 Lecture — quatre enseignements :
 
@@ -289,12 +297,15 @@ Lecture — quatre enseignements :
    des nénuphars a d'ailleurs fait redescendre son score (97 → 51) : ce qui coûte à un agent
    myope, c'est tout ce qui exige un plan, pas la variété en soi.
 
-3. **Le DQN reste le seul apprenant qui décolle** (13,1, record **75**) — il traverse
-   réellement des rivières, là où `nn` (4,7), `ppo` (6,4) et `clone` (7,8) stagnent. La leçon
-   tient : les apprenants par **gradient** profitent de la capacité et de l'entraînement long
-   (le DQN atteignait même 33 sur un monde plus simple), l'**évolution** (nn) n'en profite
-   pas, l'**imitation** (clone) plafonne au niveau du réflexe. « Inutile » est devenu « joueur
-   honnête » — mais loin des 200 exacts.
+3. **Le DQN est de loin le seul apprenant qui décolle** (**29,8**, record **168**) — il
+   traverse réellement des rivières, là où `nn` (4,7), `ppo` (7,0) et `clone` (7,8) stagnent.
+   La leçon tient : les apprenants par **gradient** profitent de la capacité et de
+   l'entraînement long, l'**évolution** (nn) n'en profite pas, l'**imitation** (clone)
+   plafonne au niveau du réflexe. Le bond de 13 à 30 ne vient pas d'une brique sophistiquée
+   mais d'un entraînement plus long **et** du contrôle de la variance inter-graines (le même
+   entraînement varie de ~50 % selon la graine — validations de 25 à 39 sur la campagne, d'où
+   10 graines en parallèle et on garde la mieux validée). « Inutile » est devenu « joueur
+   solide » — mais loin des 200 exacts.
 
 4. **La hiérarchie reste une hiérarchie d'horizon** : T+1 (heuristic, 51) < rollouts
    aléatoires (mcts, 134) < T+15 exact (search, 200). Plus on anticipe loin et juste, plus on
@@ -326,9 +337,9 @@ Sous bruit 0,1 (mêmes 50 graines, mêmes modèles qu'en déterministe) :
 | `search` | robot | **200 → 27,8** | 20 | 115 | 0/50 |
 | `guided` | hybride | 200 → 23,1 | 17 | 108 | 0/50 |
 | `mcts` | robot | 134,3 → 17,3 | 12 | 75 | 0/50 |
-| `dqn` | IA | 13,1 → **12,7** | 11 | 34 | 0/50 |
+| `dqn` | IA | 29,8 → **14,4** | 12 | 44 | 0/50 |
 | `clone` | IA | 7,8 → 8,0 | 6 | 27 | 0/50 |
-| `ppo` | IA | 6,4 → 6,0 | 5 | 15 | 0/50 |
+| `ppo` | IA | 7,0 → 6,3 | 5 | 18 | 0/50 |
 | `nn` | IA | 4,7 → 4,8 | 4 | 10 | 0/50 |
 
 Trois enseignements :
@@ -338,25 +349,28 @@ Trois enseignements :
    turbulences. Le MCTS ne prend pas l'avantage (17,3 < 27,8) : sous incertitude, calculer
    juste reste légèrement devant l'échantillonnage, mais tout le monde souffre.
 
-2. **Sous bruit, l'écart planificateurs/IA fond spectaculairement.** En déterministe, le
-   meilleur robot (200) écrasait la meilleure IA (dqn 13) d'un facteur 15. Sous bruit, ce
-   facteur tombe à **~2** : `search` 28, `mcts` 17, et `dqn` 13 juste derrière — le DQN fait
-   même aussi bien que le MCTS. Autrement dit, **quand le futur n'est plus calculable, le
-   DQN devient un concurrent sérieux des planificateurs** — c'est le régime où l'apprentissage
-   a le plus de valeur relative.
+2. **Sous bruit, l'écart planificateurs/IA se referme presque entièrement.** En déterministe,
+   le meilleur robot (200) écrase la meilleure IA (dqn 30) d'un facteur ~7. Sous bruit, ce
+   facteur tombe à **moins de 2** : `search` 28, `dqn` **14,4** devant le `mcts` (17,3 — le DQN
+   n'est plus qu'à quelques longueurs) et `heuristic` (18,3). Autrement dit, **quand le futur
+   n'est plus calculable, le DQN devient un vrai concurrent des planificateurs** — c'est le
+   régime où l'apprentissage a le plus de valeur relative.
 
-3. **Les IA sont imperturbables au changement de régime** (dqn 13,1 → 12,7 ; clone 7,8 → 8,0 ;
-   nn 4,7 → 4,8 — certaines font même un poil mieux), alors qu'elles ont été entraînées en
-   monde propre. Leurs réflexes statistiques n'ont jamais reposé sur la précision du futur.
-   (Sur un monde précédent on avait aussi testé un entraînement *dans* le bruit : il n'aidait
-   pas — le bruit dégrade le signal d'apprentissage plus qu'il ne forge une robustesse.)
+3. **Le DQN encaisse mieux le changement de régime qu'avant**, mais il a désormais plus à
+   perdre : entraîné en monde propre, il passe de 29,8 à 14,4 (les rivières qu'il franchissait
+   par timing exact deviennent des pièges — la part de « noyade » explose). Les IA plus faibles
+   restent, elles, imperturbables (clone 7,8 → 8,0 ; nn 4,7 → 4,8), parce que leurs réflexes
+   n'ont jamais reposé sur la précision du futur. (Sur un monde précédent on avait aussi testé
+   un entraînement *dans* le bruit : il n'aidait pas — le bruit dégrade le signal d'apprentissage
+   plus qu'il ne forge une robustesse.)
 
 # Reproduire les expériences
 
 ```bash
 uv run python main.py --mode train --generations 400 --curriculum --workers 4   # nn (GA)
-uv run python main.py --mode train-dqn                 # dqn (4000 épisodes, ~2 min)
-uv run python main.py --mode train-ppo                 # ppo (1500 itérations, ~25 min)
+uv run python main.py --mode train-dqn --workers 10    # dqn : 10 graines en parallèle,
+                                                       # garde la mieux validée (~5 min)
+uv run python main.py --mode train-ppo --workers 6     # ppo : 6 graines (~15 min)
 uv run python main.py --mode train-clone --samples 120000     # clone + guided
 uv run python main.py --mode bench --episodes 25              # comparatif
 uv run python main.py --mode bench --episodes 25 --noise 0.1  # match retour
@@ -368,7 +382,11 @@ uv run python main.py --mode duel --ai search --ai2 dqn --seed 3   # duel visuel
 Infrastructure : capteurs en accès tabulaires O(1) (tables précalculées par ligne sur
 son cycle exact, équivalence bit à bit vérifiée avec l'implémentation de référence) ;
 évaluation du GA parallélisable (`--workers`, résultats strictement identiques au
-séquentiel) ; le bruit du monde (`--noise`) s'applique aussi à l'entraînement.
+séquentiel) ; entraînements DQN/PPO **multi-graines** (`--workers N` : N entraînements
+indépendants, sélection sur validation — l'issue d'un entraînement RL varie du simple
+au double selon la graine, voir ANALYSE_IA.md) ; le bruit du monde (`--noise`)
+s'applique aussi à l'entraînement. Les threads BLAS sont épinglés à 1 (matrices
+minuscules : le multi-threading coûtait plus qu'il ne rapportait).
 
 # Comment on évalue les agents
 
@@ -390,13 +408,17 @@ plan d'amélioration priorisé sont dans **[ANALYSE_IA.md](ANALYSE_IA.md)**.
 
 # Pistes restantes (non implémentées)
 
+*(La mémoire, le shaping, le curriculum, les retours multi-pas, le Double DQN et
+l'entraînement long ont été implémentés et mesurés — voir
+[ANALYSE_IA.md](ANALYSE_IA.md), Épisode 2. Restent :)*
+
 1. **Lignes de train** — des rails où un train traverse périodiquement et **bloque toute la
    ligne** deux ticks, avec un signal d'alerte quelques coups à l'avance (la phase des
    capteurs le donnerait déjà). Thématiquement fidèle mais plus lourd à rendre et à équilibrer.
-2. **Politique à mémoire** (réseau récurrent ou pile d'observations) — le plafond des IA
-   réactives vient peut-être de l'absence d'état interne. Le DQN (record > 40) montre qu'il
-   reste de la marge.
+2. **Exploration dirigée** (curiosité, Go-Explore) — la piste littérature restante la plus
+   crédible contre le verrou des rivières.
 3. **Planification robuste au bruit** — expectimax borné ou marges de sécurité, pour rendre
    aux robots une avance nette en monde stochastique plutôt que le coude-à-coude actuel.
-4. **Entraînement bien plus long du DQN** — il progressait encore à 4000 épisodes.
+4. **Hybride AlphaZero complet** — une fonction de valeur apprise qui guide vraiment la
+   recherche (pas seulement l'ordre des coups).
 5. **Tournoi complet** — matrice duel de tous les agents, classement Elo.
