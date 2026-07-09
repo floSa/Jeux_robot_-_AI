@@ -52,10 +52,10 @@ from config import (
     DQN_LR,
     DQN_MODEL_PATH,
     DQN_NSTEP,
+    DQN_SENSOR,
     DQN_TARGET_SYNC,
     DQN_TRAIN_EVERY,
     FRAME_STACK,
-    NN_INPUT_SIZE,
     NN_OUTPUT_SIZE,
     RL_SHAPING,
     VALIDATION_SEEDS,
@@ -63,33 +63,42 @@ from config import (
 from engine import Engine
 from ai_base import BaseAI
 from neural import MLP, Layout
-from sensors import FrameStack, SENSOR_FULL_SIZE, sense_full as sense
-from shaping import base_reward, potential, shaped_reward
+from sensors import FrameStack, SENSOR_SETS, sensor_for_input
+from shaping import POTENTIALS, base_reward, shaped_reward
 
-DQN_LAYOUT: Layout = (NN_INPUT_SIZE * FRAME_STACK, DQN_HIDDEN_SIZE, NN_OUTPUT_SIZE)
+# jeu de capteurs de l'ENTRAÎNEMENT (l'inférence se déduit du modèle chargé)
+SENSE, SENSOR_SIZE = SENSOR_SETS[DQN_SENSOR]
+POTENTIAL = POTENTIALS.get(RL_SHAPING)  # None si "off" : récompense brute
+DQN_LAYOUT: Layout = (SENSOR_SIZE * FRAME_STACK, DQN_HIDDEN_SIZE, NN_OUTPUT_SIZE)
 
 
 class DQNAI(BaseAI):
     """Politique gloutonne sur la fonction Q apprise.
 
-    La profondeur de mémoire K est déduite du réseau chargé (entrée / taille
-    des capteurs) : les anciens modèles sans mémoire (K = 1) restent jouables.
+    Le jeu de capteurs et la profondeur de mémoire K sont déduits de la taille
+    d'entrée du réseau chargé : les anciens modèles (42 capteurs agrégés)
+    restent jouables à côté des modèles « vision grille ».
     """
 
     name = "dqn"
     family = "ia"
 
-    def __init__(self, net: MLP) -> None:
+    def __init__(self, net: MLP, sense_fn=None, stack_k: int | None = None) -> None:
         super().__init__()
         self.net = net
-        self.stack = FrameStack(max(1, net.layout[0] // SENSOR_FULL_SIZE))
+        if sense_fn is None:
+            sense_fn, k = sensor_for_input(net.layout[0])
+        else:
+            k = FRAME_STACK if stack_k is None else stack_k
+        self.sense = sense_fn
+        self.stack = FrameStack(k)
 
     @classmethod
     def from_file(cls, path: str = DQN_MODEL_PATH) -> "DQNAI":
         return cls(MLP.load(path))
 
     def get_move(self, game_state: Engine) -> Action:
-        q = self.net.forward(self.stack.push(sense(game_state)))
+        q = self.net.forward(self.stack.push(self.sense(game_state)))
         return ACTIONS[int(np.argmax(q))]
 
     def reset(self) -> None:
@@ -208,7 +217,8 @@ class DQNTrainer:
         """Score moyen (Y max) de la politique gloutonne sur des graines fixes."""
         scores = []
         for seed in seeds:
-            agent = DQNAI(self.online)  # pile de mémoire neuve par graine
+            # pile de mémoire neuve par graine, capteurs de l'entraînement
+            agent = DQNAI(self.online, sense_fn=SENSE, stack_k=FRAME_STACK)
             engine = Engine(seed=seed, noise=self.world_noise)
             while not engine.game_over:
                 engine.step(agent.get_move(engine))
@@ -228,20 +238,22 @@ class DQNTrainer:
         for ep in range(episodes):
             engine = self._new_episode_env()
             stack = FrameStack(FRAME_STACK)
-            state = stack.push(sense(engine)).astype(np.float32)
-            phi = potential(engine)
+            state = stack.push(SENSE(engine)).astype(np.float32)
+            phi = POTENTIAL(engine) if POTENTIAL else 0.0
             pending: list[tuple[np.ndarray, int, float]] = []
             while not engine.game_over:
                 action = self._epsilon_greedy(state, epsilon)
                 prev_score = engine.score
                 engine.step(ACTIONS[action])
-                if RL_SHAPING:
-                    reward, phi = shaped_reward(engine, prev_score, phi, DQN_GAMMA)
+                if POTENTIAL:
+                    reward, phi = shaped_reward(
+                        engine, prev_score, phi, DQN_GAMMA, POTENTIAL
+                    )
                 else:
                     reward = base_reward(engine, prev_score)
                 done = engine.game_over
                 next_state = (
-                    stack.push(sense(engine)).astype(np.float32)
+                    stack.push(SENSE(engine)).astype(np.float32)
                     if not done
                     else np.zeros(self.input_size, dtype=np.float32)
                 )

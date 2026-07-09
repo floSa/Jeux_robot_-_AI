@@ -44,8 +44,9 @@ from engine import Engine
 from ai_base import BaseAI
 from neural import MLP, Layout, softmax
 from sensors import FrameStack, SENSOR_FULL_SIZE, sense_full as sense
-from shaping import base_reward, potential, shaped_reward
+from shaping import POTENTIALS, base_reward, shaped_reward
 
+POTENTIAL = POTENTIALS.get(RL_SHAPING)  # None si "off" : récompense brute
 PPO_INPUT_SIZE: int = NN_INPUT_SIZE * FRAME_STACK
 POLICY_LAYOUT: Layout = (PPO_INPUT_SIZE, PPO_HIDDEN_SIZE, NN_OUTPUT_SIZE)
 VALUE_LAYOUT: Layout = (PPO_INPUT_SIZE, PPO_HIDDEN_SIZE, 1)
@@ -109,7 +110,7 @@ class PPOTrainer:
                 self._env = Engine(seed=self.rng.randrange(1_000_000), noise=self.world_noise)
                 self._stack.reset()
                 self._state = self._stack.push(sense(self._env))
-                self._phi = potential(self._env)
+                self._phi = POTENTIAL(self._env) if POTENTIAL else 0.0
             assert self._state is not None
             probs = softmax(self.policy.forward(self._state))
             a = int(self.np_rng.choice(NN_OUTPUT_SIZE, p=probs))
@@ -117,9 +118,9 @@ class PPOTrainer:
             self._env.step(ACTIONS[a])
             states[i] = self._state
             actions[i] = a
-            if RL_SHAPING:
+            if POTENTIAL:
                 rewards[i], self._phi = shaped_reward(
-                    self._env, prev_score, self._phi, PPO_GAMMA
+                    self._env, prev_score, self._phi, PPO_GAMMA, POTENTIAL
                 )
             else:
                 rewards[i] = base_reward(self._env, prev_score)

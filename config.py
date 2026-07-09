@@ -69,6 +69,17 @@ PHASE_LOOKAHEAD: Final[int] = 57             # horizon des capteurs de phase (cy
 # base (6/ligne + X + flag tronc) + phase (tto/ttf par ligne)
 NN_INPUT_SIZE: Final[int] = len(NN_SENSOR_ROWS) * (NN_FEATURES_PER_ROW + 2) + 2
 
+# --- Capteurs « vision grille » (spatio-temporels, égocentriques) ---
+# Carte de praticabilité par cellule (19 colonnes centrées sur le joueur) pour
+# chaque ligne perçue, PROJETÉE aux instants t+k (monde périodique : exact).
+GRID_SENSOR_ROWS: Final[tuple[int, ...]] = (-1, 0, 1, 2, 3, 4)
+GRID_TIME_PLANES: Final[tuple[int, ...]] = (0, 1, 2, 3)   # horizons de projection
+# par ligne : 19 cases x plans temporels + one-hot type (3) + vitesse signée ;
+# global : X normalisé + compteur de stagnation (complétude Markov)
+GRID_SENSOR_SIZE: Final[int] = len(GRID_SENSOR_ROWS) * (
+    GRID_WIDTH * len(GRID_TIME_PLANES) + 4
+) + 2
+
 # --- Neuroévolution ---
 NN_HIDDEN_SIZE: Final[int] = 32
 NN_OUTPUT_SIZE: Final[int] = len(ACTIONS)
@@ -93,12 +104,17 @@ CURRICULUM_WEIGHTS: Final[dict[int, float]] = {SAFE: 0.35, ROAD: 0.65, RIVER: 0.
 # « littérature » (mémoire, n-pas, curriculum, shaping, Double DQN) restent
 # disponibles : à ce budget elles sont neutres à nuisibles, chiffres à l'appui.
 FRAME_STACK: Final[int] = 1                   # pile des K dernières observations (1 = sans mémoire)
-RL_SHAPING: Final[bool] = False               # récompense potentielle (shaping.py)
+# shaping potentiel : "off", "plateforme" (mesuré neutre, Épisode 2) ou
+# "alignement" (mesuré gagnant AVEC la vision grille, Épisode 3)
+RL_SHAPING: Final[str] = "alignement"
 PHI_PLATFORM: Final[float] = 0.3              # potentiel : vivant sur tronc/nénuphar
 PHI_DANGER: Final[float] = 0.2                # potentiel : voiture imminente sur ma case
 PHI_DANGER_HORIZON: Final[int] = 8            # ticks sous lesquels le danger « se sent »
+PHI_ALIGN: Final[float] = 0.03                # potentiel : par case d'écart au passage suivant
+PHI_ALIGN_CAP: Final[int] = 8                 # écart au-delà duquel le potentiel sature
 
 # --- DQN ---
+DQN_SENSOR: Final[str] = "grid"               # "grid" (vision grille) ou "full" (42 agrégés)
 DQN_HIDDEN_SIZE: Final[int] = 64
 DQN_LR: Final[float] = 1e-3
 DQN_GAMMA: Final[float] = 0.97
@@ -109,7 +125,7 @@ DQN_BUFFER_SIZE: Final[int] = 100_000
 DQN_BATCH_SIZE: Final[int] = 64
 DQN_TRAIN_EVERY: Final[int] = 2               # 1 mise à jour tous les 2 pas
 DQN_TARGET_SYNC: Final[int] = 1000            # synchronisation du réseau cible (pas)
-DQN_EPISODES: Final[int] = 10_000
+DQN_EPISODES: Final[int] = 12_000
 DQN_DOUBLE: Final[bool] = False               # Double DQN (choix en ligne, évaluation cible)
 DQN_NSTEP: Final[int] = 1                     # retours multi-pas (1 = TD classique)
 DQN_CURRICULUM_PROB: Final[float] = 0.0       # part d'épisodes « rivières denses »

@@ -23,12 +23,16 @@ from collections import deque
 import numpy as np
 
 from config import (
+    GRID_SENSOR_ROWS,
+    GRID_SENSOR_SIZE,
+    GRID_TIME_PLANES,
     GRID_WIDTH,
     NN_SENSOR_ROWS,
     PHASE_LOOKAHEAD,
     RIVER,
     ROAD,
     SAFE,
+    STAGNATION_LIMIT,
 )
 from engine import Engine
 
@@ -124,6 +128,95 @@ def sense_full(
             continue
         phase.extend(_phase(engine, x, ly, tick))
     return np.concatenate((base, np.asarray(phase, dtype=np.float64)))
+
+
+def _row_standable(engine: Engine, ly: int, x: int, tick: int) -> np.ndarray:
+    """Praticabilité de la ligne ly, vue égocentrique, aux instants t+k.
+
+    Retourne un tableau (len(GRID_TIME_PLANES), GRID_WIDTH) : la colonne j
+    correspond à la case x + j - GRID_WIDTH//2 (joueur au centre). Une case
+    vaut 1.0 si le joueur pourrait s'y tenir vivant à t+k : herbe sans arbre,
+    route sans véhicule, rivière AVEC tronc ou nénuphar (logique inversée).
+    Hors grille = 0.0 (le bord est un mur mortel).
+    """
+    half = GRID_WIDTH // 2
+    cols = np.arange(GRID_WIDTH) + x - half          # colonnes absolues visées
+    valid = (0 <= cols) & (cols < GRID_WIDTH)
+    out = np.zeros((len(GRID_TIME_PLANES), GRID_WIDTH))
+    line = engine.line_at(ly)
+    if line.kind == SAFE:
+        trees = engine.tree_columns(ly)
+        free = np.array([bool(v) and (c not in trees) for c, v in zip(cols, valid)])
+        out[:] = free.astype(np.float64)
+        return out
+    occ, *_ = engine.line_tables(ly)
+    cycle = occ.shape[0]
+    xb = (cols - engine.noise_offset(ly)) % GRID_WIDTH
+    for i, k in enumerate(GRID_TIME_PLANES):
+        occupied = occ[(tick + k) % cycle, xb]
+        standable = occupied if line.kind == RIVER else ~occupied
+        out[i] = np.where(valid, standable.astype(np.float64), 0.0)
+    return out
+
+
+def sense_grid(
+    engine: Engine, x: int | None = None, y: int | None = None, tick: int | None = None
+) -> np.ndarray:
+    """Capteurs « vision grille » (GRID_SENSOR_SIZE) : la projection spatiale
+    et temporelle complète que les capteurs agrégés (sense_full) résument.
+
+    Par ligne perçue : la carte de praticabilité 19 colonnes x len(GRID_TIME_PLANES)
+    instants (monde périodique : la projection est exacte, même classe
+    d'information que les capteurs de phase tto/ttf), + type one-hot + vitesse
+    signée. Global : X normalisé + compteur de stagnation normalisé (sans lui,
+    la mort par stagnation est invisible : l'état serait non markovien, et une
+    politique argmax bloquée resterait bloquée pour l'éternité).
+    """
+    x, y, tick = _resolve(engine, x, y, tick)
+    parts: list[np.ndarray] = []
+    for dy in GRID_SENSOR_ROWS:
+        ly = y + dy
+        if ly < 0:
+            block = np.zeros(GRID_WIDTH * len(GRID_TIME_PLANES) + 4)
+            block[-4] = 1.0  # sous la grille : « herbe » infranchissable
+            parts.append(block)
+            continue
+        line = engine.line_at(ly)
+        parts.append(
+            np.concatenate((
+                _row_standable(engine, ly, x, tick).ravel(),
+                (
+                    1.0 if line.kind == SAFE else 0.0,
+                    1.0 if line.kind == ROAD else 0.0,
+                    1.0 if line.kind == RIVER else 0.0,
+                    line.direction / line.period,
+                ),
+            ))
+        )
+    parts.append(np.asarray((
+        x / (GRID_WIDTH - 1) * 2.0 - 1.0,
+        min(engine.ticks_since_progress / STAGNATION_LIMIT, 1.0),
+    )))
+    return np.concatenate(parts)
+
+
+# ---------------------------------------------------------------- dispatch
+
+# capteurs disponibles : nom -> (fonction, taille d'un état)
+SENSOR_SETS: dict[str, tuple] = {
+    "grid": (sense_grid, GRID_SENSOR_SIZE),
+    "full": (sense_full, SENSOR_FULL_SIZE),
+}
+
+
+def sensor_for_input(n_inputs: int):
+    """Retrouve (fonction capteur, profondeur de pile K) depuis la taille
+    d'entrée d'un réseau chargé — les tailles des jeux de capteurs ne sont
+    pas multiples l'une de l'autre, le dispatch est sans ambiguïté."""
+    for fn, size in SENSOR_SETS.values():
+        if n_inputs % size == 0:
+            return fn, n_inputs // size
+    raise ValueError(f"aucun jeu de capteurs ne correspond à une entrée de {n_inputs}")
 
 
 class FrameStack:

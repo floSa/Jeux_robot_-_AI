@@ -1,28 +1,33 @@
 """Récompense dense partagée par les IA à renforcement (DQN, PPO).
 
 Réponse à la cause n°2 de l'analyse (ANALYSE_IA.md) : le signal « +1 par
-ligne » est trop creux pour apprendre les sous-tâches dures (entrer sur un
-tronc, esquiver une voiture imminente). On ajoute un shaping POTENTIEL
-(Ng et al., 1999) : F = gamma * Phi(s') - Phi(s), qui densifie le signal
-sans changer la politique optimale (invariance des politiques).
+ligne » est trop creux pour apprendre les sous-tâches dures. On ajoute un
+shaping POTENTIEL (Ng et al., 1999) : F = gamma * Phi(s') - Phi(s), qui
+densifie le signal sans changer la politique optimale (invariance des
+politiques). Phi(état terminal) = 0 : la pénalité de mort reste bornée.
 
-Phi est volontairement BORNÉ et LOCAL (pas de terme en Y absolu : la
-récompense de progression existe déjà, et un potentiel proportionnel à Y
-ferait exploser la variance à la mort) :
+Deux potentiels disponibles (config RL_SHAPING), tous deux BORNÉS et LOCAUX
+(pas de terme en Y absolu : la récompense de progression existe déjà, et un
+potentiel proportionnel à Y ferait exploser la variance à la mort) :
 
-- +PHI_PLATFORM si le joueur est vivant sur une rivière (donc sur un tronc
-  ou un nénuphar) : le coup d'ENTRÉE en rivière — celui que l'exploration
-  epsilon-greedy n'ose presque jamais — reçoit un bonus immédiat ;
-- -PHI_DANGER * (1 - tto/horizon) sur route quand une voiture arrive dans
-  moins de PHI_DANGER_HORIZON ticks : s'écarter d'une trajectoire mortelle
-  rapporte tout de suite, sans attendre la mort pour l'apprendre ;
-- Phi(état terminal) = 0 : la pénalité de mort reste bornée.
+- « plateforme » (`potential`) : +PHI_PLATFORM vivant sur une rivière,
+  -PHI_DANGER*(1 - tto/horizon) sous une voiture imminente. Mesuré NEUTRE
+  avec les capteurs agrégés (Épisode 2 de l'analyse).
+- « alignement » (`potential_align`) : -PHI_ALIGN par case d'écart latéral
+  avec le passage praticable le plus proche de la ligne SUIVANTE (à t+1).
+  Se rapprocher du trou rapporte immédiatement — c'est l'anti-stagnation.
+  Mesuré GAGNANT avec les capteurs vision-grille (Épisode 3) : le réseau
+  voit alors le passage vers lequel le potentiel le guide.
 """
 
 from __future__ import annotations
 
+import numpy as np
+
 from config import (
     GRID_WIDTH,
+    PHI_ALIGN,
+    PHI_ALIGN_CAP,
     PHI_DANGER,
     PHI_DANGER_HORIZON,
     PHI_PLATFORM,
@@ -32,6 +37,7 @@ from config import (
     REWARD_WIN,
     RIVER,
     ROAD,
+    SAFE,
 )
 from engine import Engine
 
@@ -63,13 +69,51 @@ def potential(engine: Engine) -> float:
     return 0.0
 
 
+def potential_align(engine: Engine) -> float:
+    """Potentiel d'alignement : écart latéral au passage praticable le plus
+    proche de la ligne SUIVANTE, évalué à t+1 (0 sur état terminal).
+
+    C'est l'anti-stagnation : se décaler vers le trou de la ligne d'après
+    rapporte immédiatement, sans attendre le +1 de la ligne franchie.
+    """
+    if engine.game_over:
+        return 0.0
+    x, y, tick = engine.player_x, engine.player_y, engine.tick
+    line = engine.line_at(y + 1)
+    if line.kind == SAFE:
+        trees = engine.tree_columns(y + 1)
+        good = np.array([c not in trees for c in range(GRID_WIDTH)])
+    else:
+        occ, *_ = engine.line_tables(y + 1)
+        row = occ[
+            (tick + 1) % occ.shape[0],
+            (np.arange(GRID_WIDTH) - engine.noise_offset(y + 1)) % GRID_WIDTH,
+        ]
+        good = row if line.kind == RIVER else ~row
+    cand = np.nonzero(good)[0]
+    if len(cand) == 0:
+        return 0.0
+    return -PHI_ALIGN * min(int(np.min(np.abs(cand - x))), PHI_ALIGN_CAP)
+
+
+# potentiels sélectionnables par la config RL_SHAPING ("off" = récompense brute)
+POTENTIALS: dict[str, object] = {
+    "plateforme": potential,
+    "alignement": potential_align,
+}
+
+
 def shaped_reward(
-    engine: Engine, prev_score: int, prev_phi: float, gamma: float
+    engine: Engine,
+    prev_score: int,
+    prev_phi: float,
+    gamma: float,
+    potential_fn=potential,
 ) -> tuple[float, float]:
     """Récompense façonnée du pas qui vient d'être joué.
 
     Retourne (récompense, nouveau potentiel) — le potentiel est à re-passer
     au pas suivant pour éviter de le recalculer deux fois.
     """
-    phi = potential(engine)
+    phi = potential_fn(engine)
     return base_reward(engine, prev_score) + gamma * phi - prev_phi, phi
