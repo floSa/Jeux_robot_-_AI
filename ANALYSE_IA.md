@@ -18,18 +18,19 @@ et réfutée, feuille de route vers B.2) est dans [STRATEGIE.md](STRATEGIE.md), 
 | Agent | Score moyen | Record | Ce qu'il fait |
 |---|---:|---:|---|
 | `search` / `guided` | **200** | 200 | franchit tout (planification exacte) |
-| `dqn-shield` | **188** | 200 | vision grille + filet (profondeur 7 + sauvetage) : 43/50 victoires |
+| **`dqn-shield`** | **195** | 200 | conv 1D + filet (profondeur 7 + sauvetage) : 46/50 victoires (92 %) |
+| `clone-shield` | 185 | 200 | imitation + DAgger + filet : 42/50 victoires |
 | `mcts` | 134 | 200 | planification approximative |
-| `clone-shield` | **185** | 200 | imitation + DAgger + filet : 42/50 victoires |
-| `dqn` | 91 | 200 | vision grille seule : traverse tout, gagne 8/50 |
+| `dqn` | **146** | 200 | conv 1D seule, sans filet : 28/50 victoires |
 | `heuristic` | 51 | 200 | glouton T+1, cale sur ce qui exige un plan |
 | `clone` | 51 | 200 | imitation + DAgger en vision grille |
 | `ppo` | 7 | 33 | policy gradient |
 | `nn` | 5 | 10 | neuroévolution |
 
-*(`dqn-shield`/`clone-shield` = Épisode 4 (filet de sécurité, famille hybride) ;
-`dqn`/`clone` = après l'Épisode 3 (vision grille) ; `ppo` = après l'Épisode 2.
-Chiffres d'origine, qui ont motivé l'analyse ci-dessous : dqn 13, clone 8, ppo 6.)*
+*(`dqn` = architecture convolutive (Épisode 7) ; `dqn-shield`/`clone-shield` =
++ filet de sécurité (Épisodes 4-5, famille hybride) ; `clone` = après
+l'Épisode 3 (vision grille) ; `ppo` = après l'Épisode 2. Chiffres d'origine,
+qui ont motivé l'analyse ci-dessous : dqn 13, clone 8, ppo 6.)*
 
 Fait central au départ : **quatre méthodes d'apprentissage très différentes plafonnaient
 toutes très bas** (dqn 13, clone 8, ppo 6, nn 5), alors que la planification atteint 200.
@@ -395,6 +396,44 @@ le patron AlphaZero encore une fois, à un autre étage du problème.
 Reproductible : `--shield` (`--shield-depth` pour l'horizon) sur `play`,
 `duel`, `bench`. Détails et feuille de route dans
 [STRATEGIE.md](STRATEGIE.md), Épisode 4.
+
+---
+
+# Épisode 7 (résumé) — la convolution 1D bat le MLP dense de +45 %
+
+L'Épisode 5 avait réfuté « voir plus loin » (élargir le cône de vision).
+La question suivante : et si le problème n'était pas *voir plus*, mais
+*mieux exploiter ce qu'on voit déjà* ? Un MLP dense réapprend chaque motif
+de praticabilité à chaque colonne indépendamment ; une convolution 1D
+partage ses poids entre colonnes (équivariance par translation — un trou
+est un trou, où qu'il soit). Implémentée dans `conv_neural.py`
+(`ConvQNet`), gradients vérifiés numériquement (erreur relative max
+7,75e-10, avant tout entraînement).
+
+Ablation (4000 épisodes, 2 graines, bench 25 graines) :
+
+| Config | Bench moyen |
+|---|---:|
+| MLP dense (référence) | 83,4 |
+| **conv 6 canaux, noyau 5** | **120,6 (+45 %)** |
+| conv 8 canaux, noyau 5 | 100,7 (+21 %) |
+| conv 8 canaux, noyau 7 | 76,2 (−9 %) |
+
+Verdict : la convolution gagne nettement, et le pattern « plus de capacité
+nuit à ce budget » se reproduit une fois de plus (8 canaux/noyau 7 perd
+même face au MLP). C'est la première fois qu'un changement d'ARCHITECTURE
+bat la représentation seule. Intégré en production (`config.DQN_ARCHITECTURE
+= "conv"`, nouveau défaut) ; `--shield` fonctionne tel quel avec un DQN
+convolutif.
+
+**Bench officiel (50 graines, déterministe) : réflexe pur seul 146,3
+(28/50 victoires) — déjà mieux que l'ancien DQN+filet MLP (91,3 → 165,1).
+Combiné au filet (Épisode 5) : 194,9, 46/50 victoires (92 %), à 5 points du
+plafond théorique de 200.** Le meilleur résultat du projet côté
+apprentissage. Sous bruit, aucun changement (19,2 avec ou sans filet) : la
+robustesse au bruit reste le seul chantier non résolu. Détails complets,
+campagne de production (validations 165-190,3, dix graines) et bench dans
+[STRATEGIE.md](STRATEGIE.md), Épisode 7.
 
 ## Références
 

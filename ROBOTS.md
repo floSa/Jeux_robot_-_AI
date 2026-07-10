@@ -173,14 +173,15 @@ plateau mesuré (~7 lignes après 300 générations de la v1) :
 ## `dqn` — le Q-learning profond (gradient)
 
 La comparaison canonique avec la neuroévolution : mêmes capteurs, mais un **signal
-d'apprentissage dense** au lieu du seul score final. Le réseau (42 → 64 → 5) apprend la
-*valeur* Q(état, action) par équation de Bellman : +1 par ligne nouvelle, −0,01 par tick,
+d'apprentissage dense** au lieu du seul score final. Le réseau apprend la *valeur*
+Q(état, action) par équation de Bellman : +1 par ligne nouvelle, −0,01 par tick,
 −1 à la mort, +5 à la victoire, propagés par récompense actualisée (γ = 0,97). Ingrédients
 classiques, tous en numpy pur : replay buffer circulaire (100 000 transitions), réseau
 cible synchronisé, ε-greedy décroissant, Adam sur perte TD.
 
-**C'est l'IA vedette du projet : 91,3 de moyenne et 8 victoires sur 50**, au terme de
-trois chantiers successifs qui sont autant de leçons :
+**C'est l'IA vedette du projet : 146,3 de moyenne et 28 victoires sur 50 en réflexe pur**
+(sans aucune aide extérieure au jeu), au terme de quatre chantiers successifs qui sont
+autant de leçons :
 
 1. **Capacité + entraînement long + multi-graines** (13 → 30) : la graine d'entraînement
    fait varier le score du simple au double, donc 10 entraînements en parallèle
@@ -194,6 +195,14 @@ trois chantiers successifs qui sont autant de leçons :
    stagnation (sans lui, l'état n'était même pas markovien). Même DQN, mêmes
    hyperparamètres : ×3. Le shaping d'« alignement » (se rapprocher du passage de la
    ligne suivante rapporte tout de suite) devient utile une fois la cible visible.
+4. **La convolution 1D** (91 → 146) : un MLP dense doit réapprendre chaque motif de
+   praticabilité à chaque colonne indépendamment ; une convolution (`conv_neural.py`,
+   `config.DQN_ARCHITECTURE = "conv"`) partage ses poids entre colonnes — « un trou est
+   un trou, où qu'il soit ». Mesuré +45 % en ablation contrôlée face au MLP, à
+   protocole identique par ailleurs ; en production (campagne 10 graines), validations
+   remarquablement stables (165-190) contre 25-39 pour l'ancien MLP. **Combiné au filet
+   de sécurité** (voir `--shield` plus bas) : **194,9 de moyenne, 46/50 victoires (92 %)**
+   — à 5 points du plafond théorique de 200.
 
 L'histoire complète, chiffrée et sourcée, est dans [ANALYSE_IA.md](ANALYSE_IA.md).
 
@@ -320,10 +329,10 @@ problème a une solution.
 
 # Résultats — bench officiel (50 graines identiques pour tous)
 
-`uv run python main.py --mode bench --episodes 50` (entraînements : dqn **vision grille,
-10 graines × 12 000 épisodes** puis sélection sur validation ; clone **imitation 60 000
-exemples + 2 tours DAgger** en vision grille ; ppo 6 graines × 1500 itérations ; GA 400
-générations) :
+`uv run python main.py --mode bench --episodes 50` (entraînements : dqn **conv 1D
+(6 canaux, noyau 5), 10 graines × 12 000 épisodes** puis sélection sur validation ;
+clone **imitation 60 000 exemples + 2 tours DAgger** en vision grille ; ppo 6 graines ×
+1500 itérations ; GA 400 générations) :
 
 Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes**) :
 
@@ -333,19 +342,19 @@ Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes*
 | `search` | robot | **200** | 200 | 200 | **50/50** | 0,31 |
 | `mcts` | robot | 134,3 | 200 | 200 | 25/50 | 14,0 |
 | `nn` | IA | 4,7 | 4 | 10 | 0/50 | 0,45 |
-| `dqn` | IA | **91,3** | 78 | **200** | **8/50** | 0,28 |
+| `dqn` | IA | **146,3** | **200** | **200** | **28/50** | 0,32 |
 | `ppo` | IA | 7,0 | 5 | 33 | 0/50 | 0,38 |
 | `clone` | IA | **51,4** | 40 | **200** | 1/50 | 0,36 |
 | `guided` | hybride | **200** | 200 | 200 | **50/50** | 1,42 |
-| `dqn-shield` | hybride | **187,9** | **200** | **200** | **43/50** | 0,74 |
+| **`dqn-shield`** | hybride | **194,9** | **200** | **200** | **46/50 (92 %)** | 0,34 |
 | `clone-shield` | hybride | **185,0** | **200** | **200** | **42/50** | 0,75 |
 
-*(`dqn` et `clone` : vision grille — Épisode 3 d'[ANALYSE_IA.md](ANALYSE_IA.md) ;
+*(`dqn` : architecture convolutive — Épisode 7 d'[ANALYSE_IA.md](ANALYSE_IA.md) ;
 `dqn-shield`/`clone-shield` : filet de sécurité `--shield` profondeur 7 + sauvetage
-anti-stagnation — Épisode 5 ; `ppo` : multi-graines de l'Épisode 2. `heuristic`,
-`search`, `mcts`, `nn` inchangés.)*
+anti-stagnation — Épisodes 5 et 7 ; `ppo` : multi-graines de l'Épisode 2. `heuristic`,
+`search`, `mcts`, `nn`, `clone` inchangés depuis l'Épisode 3.)*
 
-Lecture — quatre enseignements :
+Lecture — cinq enseignements :
 
 1. **Dans un monde prévisible, la planification écrase l'apprentissage.** `search` et
    `guided` gagnent **tout** (50/50) ; même le MCTS, planificateur *approximatif*, gagne
@@ -359,19 +368,27 @@ Lecture — quatre enseignements :
    des nénuphars a d'ailleurs fait redescendre son score (97 → 51) : ce qui coûte à un agent
    myope, c'est tout ce qui exige un plan, pas la variété en soi.
 
-3. **Le DQN gagne désormais des parties** (**91,3** de moyenne, médiane 78, **8 victoires
-   sur 50**) et le `clone` égale l'`heuristic` (51,4, une victoire) — en réflexe pur, sans
-   recherche au moment de jouer. Le déblocage n'est venu ni d'un meilleur algorithme ni d'un
-   réglage : c'est la **vision grille** (voir la praticabilité des 19 colonnes projetée à
-   t..t+3) qui a tout changé — dqn 13 → 30 par l'entraînement multi-graines, puis → **91**
-   par la représentation. Preuve par les causes de mort : les stagnations passent de 33/50
-   à 3/50. L'`évolution` (nn, 4,7) et le policy gradient (ppo, 7,0), restés aux capteurs
+3. **Le DQN, en réflexe pur, approche maintenant les planificateurs** (**146,3** de
+   moyenne, médiane 200, **28 victoires sur 50**, sans aucune aide extérieure au jeu). Le
+   déblocage final n'est venu ni d'un réglage ni de la seule représentation, mais d'un
+   changement d'ARCHITECTURE : la **convolution 1D**, qui partage ses poids entre colonnes
+   là où le MLP dense réapprenait chaque motif à chaque position. Combiné au filet de
+   sécurité : **194,9 de moyenne, 46/50 victoires (92 %)** — à 5 points du plafond
+   théorique. Le `clone` (imitation, 51,4) et le policy gradient (`ppo`, 7,0), restés aux
+   capteurs
    agrégés, n'ont pas bougé — le contraste est la démonstration.
 
 4. **La hiérarchie reste une hiérarchie d'horizon** : T+1 (heuristic, 51) < rollouts
    aléatoires (mcts, 134) < T+15 exact (search, 200). Plus on anticipe loin et juste, plus on
    va loin ; `guided` confirme le résultat négatif (même qualité que `search` pour ~+1 % de
    nœuds et un coût doublé — il ne reste rien à guider quand la recherche est déjà si efficace).
+
+5. **Algorithme < représentation < architecture < filet, dans cet ordre.** Chaque étage a
+   apporté un gain net, mais pas le même : régler l'algorithme (Épisode 2) a fait ×2-3 sur
+   un budget mal exploité ; changer la représentation (Épisode 3) a fait ×3 ; changer
+   l'architecture (Épisode 7) a fait ×1,6 de plus sur un réflexe déjà bon ; et **combiner
+   le réflexe appris à une vérification exacte** (le filet, Épisodes 4-5) a fait franchir
+   le dernier tiers vers 200. Aucun de ces leviers seul n'aurait suffi.
 
 ---
 
@@ -398,11 +415,11 @@ Sous bruit 0,1 (mêmes 50 graines, mêmes modèles qu'en déterministe) :
 | `search` | robot | **200 → 27,8** | 20 | 115 | 0/50 |
 | `guided` | hybride | 200 → 21,7 | 18 | 80 | 0/50 |
 | `mcts` | robot | 134,3 → 17,3 | 12 | 75 | 0/50 |
-| `dqn` | IA | 91,3 → 18,0 | 13 | 88 | 0/50 |
+| `dqn` | IA | 146,3 → 19,2 | 13 | 95 | 0/50 |
 | `clone` | IA | 51,4 → **19,2** | 16 | 61 | 0/50 |
 | `ppo` | IA | 7,0 → 6,3 | 5 | 18 | 0/50 |
 | `nn` | IA | 4,7 → 4,8 | 4 | 10 | 0/50 |
-| `dqn-shield` | hybride | 187,9 → 19,6 | 14 | 88 | 0/50 |
+| `dqn-shield` | hybride | 194,9 → 19,2 | 13 | 95 | 0/50 |
 | `clone-shield` | hybride | 185,0 → 28,4 | 19 | 128 | 0/50 |
 
 Trois enseignements :
@@ -413,23 +430,24 @@ Trois enseignements :
    juste reste légèrement devant l'échantillonnage, mais tout le monde souffre.
 
 2. **Sous bruit, tout le monde se retrouve dans un mouchoir de poche.** En déterministe,
-   `search` (200) garde un facteur ~2 sur la meilleure IA (dqn 91). Sous bruit : `search`
-   27,8, puis `guided` 21,7, `clone` **19,2**, `heuristic` 18,3, `dqn` 18,0, `mcts` 17,3 —
-   cinq approches radicalement différentes entre 17 et 22. Quand le futur n'est plus
-   calculable, ni la planification exacte ni le réflexe appris ne gardent d'avantage
-   décisif : c'est l'incertitude elle-même qui plafonne tout le monde.
+   `search` (200) garde un facteur ~1,4 sur la meilleure IA (dqn-shield 195). Sous bruit :
+   `search` 27,8, puis `guided` 21,7, `clone` et `dqn` **19,2** à égalité, `heuristic` 18,3,
+   `mcts` 17,3 — cinq approches radicalement différentes entre 17 et 22. Quand le futur
+   n'est plus calculable, ni la planification exacte ni le réflexe appris ne gardent
+   d'avantage décisif : c'est l'incertitude elle-même qui plafonne tout le monde.
 
-3. **Plus une IA exploite le déterminisme, plus le bruit lui coûte.** Le dqn vision-grille
-   passe de 91 à 18 et le clone de 51 à 19 : leurs projections t+1..t+3, exactes en monde
-   propre, deviennent des promesses trahies (la part de « noyade » explose — 27/50 pour le
-   dqn). Les IA aux capteurs agrégés, qui n'ont jamais rien exploité de précis, ne bronchent
-   pas (nn 4,7 → 4,8 ; ppo 7,0 → 6,3)… mais ne partaient de rien. (Un entraînement *dans* le
-   bruit avait déjà été testé : il n'aide pas — le bruit dégrade le signal d'apprentissage
-   plus qu'il ne forge une robustesse.)
+3. **Plus une IA exploite le déterminisme, plus le bruit lui coûte.** Le dqn convolutif
+   passe de 146 à 19 (avec ou sans filet, identique — voir point 4) et le clone de 51 à 19 :
+   leurs projections t+1..t+3, exactes en monde propre, deviennent des promesses trahies
+   (la part de « noyade »/« collision » explose). Les IA aux capteurs agrégés, qui n'ont
+   jamais rien exploité de précis, ne bronchent pas (nn 4,7 → 4,8 ; ppo 7,0 → 6,3)… mais ne
+   partaient de rien. (Un entraînement *dans* le bruit avait déjà été testé : il n'aide
+   pas — le bruit dégrade le signal d'apprentissage plus qu'il ne forge une robustesse.)
 
-4. **Le filet de sécurité tombe dans le même piège que les planificateurs.** En
-   déterministe il porte le dqn à 86 % de victoires (91 → 188) ; sous bruit, son gain fond
-   presque entièrement (188 → 19,6, contre 91 → 18 sans filet) — et approfondir la
+4. **Le filet de sécurité tombe dans le même piège que les planificateurs — et changer
+   l'architecture du réseau protégé n'y change rien.** En déterministe il porte le dqn
+   convolutif à 92 % de victoires (146 → 195) ; sous bruit, le gain disparaît complètement
+   (195 → 19,2, **rigoureusement identique** au dqn sans filet) — et approfondir la
    profondeur (3→7) ou ajouter le sauvetage anti-stagnation n'y change rien, vérifié.
    Raison précise : le filet vérifie la survie en supposant que la turbulence *actuelle*
    persiste au tick suivant, alors que le monde en retire une nouvelle à chaque tick réel —

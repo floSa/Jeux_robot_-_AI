@@ -271,53 +271,122 @@ reconstruction, pas un ajustement. **Classé non retenu pour l'instant** ;
 le code reste dans `ai_hybrid.py` (inerte sous bruit, sans coût en
 déterministe) pour une reprise éventuelle avec la bonne formulation.
 
-## 7. Feuille de route vers « 200 à tous les coups »
+## 7. Épisode 7 — piste B.2 : la convolution 1D bat le MLP dense de +45 %
+
+Diagnostic de départ : B.1 (Épisode 5) a prouvé que le problème n'est pas
+« voir plus loin » mais « mieux exploiter ce qui est déjà vu ». Un MLP dense
+doit réapprendre chaque motif de praticabilité à chaque position de colonne
+indépendamment (482 entrées, aucun paramètre partagé) ; une convolution 1D
+partage ses poids entre colonnes — « un trou est un trou, où qu'il soit ».
+
+### Implémentation (`conv_neural.py`)
+
+`ConvQNet` : la carte de praticabilité de `sense_grid` (6 lignes × 4 plans
+temporels × 19 colonnes) est vue comme un signal 1D de 24 canaux (ligne ×
+plan) sur 19 positions ; convolution à noyau impair, padding « same »
+(poids partagés entre colonnes), tanh, aplatissement + concaténation des
+scalaires par ligne (type, vitesse) qui contournent la convolution (aucune
+structure spatiale à exploiter pour eux), puis tête dense classique
+(cachée tanh → logits). Même API que `neural.MLP`
+(forward/backward/adam_step/get_flat/copy/save/load) — substituable partout
+où `MLP` est utilisée. **Gradients vérifiés numériquement sur les 6
+groupes de paramètres (conv et denses) : erreur relative maximale 7,75e-10**
+(précision machine), avant tout entraînement.
+
+### Ablation (4000 épisodes, 2 graines, bench 25 graines)
+
+| Config | Bench moyen | vs MLP |
+|---|---:|---:|
+| MLP dense (référence) | 83,4 | — |
+| **conv 6 canaux, noyau 5** | **120,6** | **+45 %** |
+| conv 8 canaux, noyau 5 | 100,7 | +21 % |
+| conv 8 canaux, noyau 7 | 76,2 | −9 % |
+
+Verdict net et reproductible sur les deux graines de chaque variante :
+**la convolution bat le MLP dense**, et **le même pattern qu'aux Épisodes
+2/3/5 se reproduit une fois de plus** — plus de capacité (8 canaux, noyau 7)
+nuit à budget d'entraînement fixe ; la config la plus légère (6 canaux,
+noyau 5) gagne. C'est la première fois qu'un changement d'ARCHITECTURE bat
+la simple représentation — pas un réglage de plus.
+
+### Intégration production
+
+`config.DQN_ARCHITECTURE = "conv"` (nouveau défaut, mesuré gagnant) pilote
+`ai_qlearning._build_net()` ; `load_dqn_net()` charge indifféremment un
+ancien modèle MLP ou un modèle conv (marqueur `kind` dans le `.npz`,
+rétro-compatible). Vérifié : `--shield` fonctionne tel quel avec un DQN
+conv (le filet est agnostique de l'architecture interne de l'agent enveloppé).
+
+**Campagne de production** (10 graines × 12 000 épisodes, config conv
+6 canaux/noyau 5) : validations remarquablement stables et hautes —
+165,0 / 165,0 / 172,8 / 173,5 / 176,6 / 179,4 / 181,4 / 183,2 / 183,4 /
+**190,3** (retenue). À comparer à la campagne MLP-grid de l'Épisode 2
+(25,2 à 38,8) : non seulement le sommet est plus haut, mais **toute la
+distribution est décalée** — la pire graine conv (165,0) bat de loin la
+meilleure graine MLP (38,8).
+
+**Bench final officiel (50 graines) :**
+
+| Agent | Déterministe | Bruit 0,1 |
+|---|---:|---:|
+| `dqn` (conv, sans filet) | **146,3**, méd 200, **28/50 victoires** | 19,2, 0/50 |
+| **`dqn-shield` (conv + filet)** | **194,9**, méd 200, **46/50 (92 %)** | 19,2, 0/50 |
+
+**Le réflexe pur seul (146,3, 28/50) dépasse déjà l'ancien DQN+filet MLP
+(91,3 → 165,1)** — la représentation en vision grille était bonne, mais le
+MLP dense la gâchait par-dessous. Combiné au filet (déjà mesuré comme
+rentable, Épisode 5), le nouveau DQN atteint **194,9 de moyenne et 92 % de
+victoires** — à 5 points du plafond théorique de 200. Il ne reste que
+4 défaites sur 50 (3 stagnations, 1 collision) : la piste B.2 + A′ ensemble
+sont, de loin, le résultat le plus fort du projet côté apprentissage. Sous
+bruit, le filet reste inerte comme diagnostiqué à l'Épisode 6 (dqn-shield =
+dqn, 19,2 dans les deux cas) — la limite de robustesse au bruit demeure
+entière et n'est pas résolue par ce changement d'architecture.
+
+## 8. Feuille de route vers « 200 à tous les coups »
 
 Le constat de départ (avant le filet) : le dqn mourait **en jouant**
-(collisions 19, noyades 11, sorties 9), plus en hésitant. Les pistes A, A′
-ont comblé l'essentiel de cet écart en monde déterministe (**43/50
-victoires, 187,9 de moyenne**) ; A″ (bruit) a été testée et n'a pas suffi
-en l'état — une reconstruction, pas un réglage, la reporterait. La piste B
-(réflexe pur) devient la priorité :
+(collisions 19, noyades 11, sorties 9), plus en hésitant. Les pistes A, A′,
+puis B.2 ont comblé l'essentiel de cet écart en monde déterministe :
+**46/50 victoires, 194,9 de moyenne, à 5 points du plafond théorique.**
+A″ (bruit) a été testée et n'a pas suffi en l'état — une reconstruction,
+pas un réglage, la reporterait, et le nouveau DQN conv n'y change rien
+(19,2 avec ou sans filet sous bruit, identique à l'ancien MLP).
 
-### Piste B — pousser le réflexe pur, sans filet (le vrai défi, priorité désormais)
+### Piste B — pousser le réflexe pur, sans filet (le vrai défi)
 
 1. ~~Élargir le cône de vision~~ — **testé et réfuté** (Épisode 5).
-2. **Architecture convolutionnelle 1D sur les colonnes** : un MLP dense doit
-   réapprendre chaque motif à chaque position ; une convolution partage les
-   poids entre colonnes (équivariance par translation — la situation « trou à
-   gauche » est la même partout). C'est maintenant LE candidat n°1 : la
-   piste B.1 a prouvé que le problème n'est pas « voir plus loin » mais
-   « mieux exploiter ce qui est déjà vu ». À écrire en numpy (forward +
-   backward, ~100 lignes, vérification par gradient numérique comme pour
-   le MLP).
-3. **DQfD / initialisation par le clone** : pré-remplir le replay avec des
+2. ~~Architecture convolutionnelle 1D~~ — **testée, confirmée, en
+   production** (Épisode 7). Seule ou combinée au filet, c'est le
+   meilleur résultat du projet côté apprentissage : réflexe pur 146,3
+   (28/50), + filet 194,9 (46/50, 92 %).
+3. **Reste à fermer (4 défaites/50, déterministe)** : 3 stagnations que ni
+   le réflexe conv ni le sauvetage BFS à 8 coups ne rattrapent (cycles de
+   tronc trop longs), 1 collision résiduelle. Marge de progression faible
+   mais non nulle — `SHIELD_RESCUE_DEPTH` adaptatif, ou plus d'épisodes
+   d'entraînement conv (12 000 → 20 000+, coût modéré).
+4. **DQfD / initialisation par le clone** : pré-remplir le replay avec des
    transitions de `search` (ou initialiser le réseau Q depuis la politique du
    clone-DAgger) — le RL part alors d'un comportement déjà compétent au lieu
    de redécouvrir la marche. Littérature : Hester et al. 2018.
-4. **Masquage des actions fatales PENDANT l'entraînement** : ne jamais
+5. **Masquage des actions fatales PENDANT l'entraînement** : ne jamais
    laisser epsilon jouer un coup prouvé-mortel → toute l'exploration se
    concentre sur les vrais choix. (Si on garde le masque au jeu, on retombe
    dans la piste A — à trancher.)
-5. **Encore plus long + replay priorisé sur les quasi-morts** : le dqn
-   progressait toujours à 12 000 épisodes ; viser 50 000+ (l'entraînement est
-   parallèle et ne coûte que quelques dizaines de minutes).
 
-Pronostic mis à jour : « réseau + filet » atteint désormais 86 % de victoires
-en monde déterministe — la piste A″ (bruit) est la dernière brique pour
-fermer complètement cette voie. La piste B (réflexe pur) a perdu son option
-la moins chère (élargir la vue) ; B.2 (convolution) est maintenant le seul
-levier d'architecture crédible pour un réflexe fort sans filet ni recherche.
+Le vrai chantier restant est **la robustesse au bruit** (piste A″, non
+résolue par aucun des deux leviers testés) — c'est la seule zone où le
+projet est encore loin d'une solution, déterministe ou apprise.
 
 ### Chantiers annexes (indépendants)
 
-- **PPO en vision grille** : ppo est resté aux 42 capteurs (7,0) ; lui donner
-  `sense_grid` + alignement est un test à ~1 h qui dirait si le policy
-  gradient profite autant que la valeur.
+- **PPO / clone en convolution** : seul le dqn a été testé ; étendre
+  `ConvQNet` à `ai_ppo.py` et `ai_hybrid.py` (imitation) est un prolongement
+  direct à faible risque (l'architecture a déjà fait ses preuves).
 - **Lignes de train** (gameplay), **tournoi Elo** : voir « Pistes restantes »
   de ROBOTS.md.
 
-## 8. Reprendre le projet en 5 minutes
+## 9. Reprendre le projet en 5 minutes
 
 ```bash
 uv sync                                                  # environnement
@@ -329,11 +398,13 @@ uv run python main.py --mode train-clone                 # réentraîner clone (
 
 Fichiers clés : `config.py` (tous les choix mesurés sont les défauts ; les
 briques rejetées restent activables : FRAME_STACK, DQN_NSTEP, DQN_DOUBLE,
-DQN_CURRICULUM_PROB, RL_SHAPING, DQN_SENSOR), `sensors.py` (les deux
-générations de capteurs + dispatch automatique par taille d'entrée du modèle),
-`shaping.py` (potentiels), `ai_qlearning.py` (DQN + multi-graines),
-`ai_hybrid.py` (imitation + DAgger + recherche guidée + `ShieldedAI` filet
-de sécurité + sauvetage anti-stagnation).
+DQN_CURRICULUM_PROB, RL_SHAPING, DQN_SENSOR, DQN_ARCHITECTURE=mlp pour
+revenir au dense), `sensors.py` (les deux générations de capteurs + dispatch
+automatique par taille d'entrée du modèle), `shaping.py` (potentiels),
+`conv_neural.py` (`ConvQNet`, l'architecture convolutive de l'Épisode 7),
+`ai_qlearning.py` (DQN + multi-graines + `_build_net`/`load_dqn_net` — bascule
+mlp/conv), `ai_hybrid.py` (imitation + DAgger + recherche guidée + `ShieldedAI`
+filet de sécurité + sauvetage anti-stagnation).
 
 Détail d'exécution : les threads BLAS sont épinglés à 1 dans `main.py`
 (matrices minuscules : le multi-threading coûtait jusqu'à 10× ; ne pas retirer).
