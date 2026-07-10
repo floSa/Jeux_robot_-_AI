@@ -17,15 +17,18 @@ et la feuille de route sont dans [STRATEGIE.md](STRATEGIE.md).
 | Agent | Score moyen | Record | Ce qu'il fait |
 |---|---:|---:|---|
 | `search` / `guided` | **200** | 200 | franchit tout (planification exacte) |
+| `dqn-shield` | **165** | 200 | vision grille + filet de sécurité : 35/50 victoires |
 | `mcts` | 134 | 200 | planification approximative |
-| `dqn` | **91** | 200 | vision grille : traverse tout, gagne 8/50 |
+| `clone-shield` | **153** | 200 | imitation + DAgger + filet : 29/50 victoires |
+| `dqn` | 91 | 200 | vision grille seule : traverse tout, gagne 8/50 |
 | `heuristic` | 51 | 200 | glouton T+1, cale sur ce qui exige un plan |
-| `clone` | **51** | 200 | imitation + DAgger en vision grille |
+| `clone` | 51 | 200 | imitation + DAgger en vision grille |
 | `ppo` | 7 | 33 | policy gradient |
 | `nn` | 5 | 10 | neuroévolution |
 
-*(Chiffres `dqn`/`clone` = après l'Épisode 3 (vision grille) ; `ppo` = après l'Épisode 2.
-Ceux d'origine, qui ont motivé l'analyse ci-dessous : dqn 13, clone 8, ppo 6.)*
+*(`dqn-shield`/`clone-shield` = Épisode 4 (filet de sécurité, famille hybride) ;
+`dqn`/`clone` = après l'Épisode 3 (vision grille) ; `ppo` = après l'Épisode 2.
+Chiffres d'origine, qui ont motivé l'analyse ci-dessous : dqn 13, clone 8, ppo 6.)*
 
 Fait central au départ : **quatre méthodes d'apprentissage très différentes plafonnaient
 toutes très bas** (dqn 13, clone 8, ppo 6, nn 5), alors que la planification atteint 200.
@@ -321,6 +324,76 @@ sans une seule brique exotique, passe de 13 à 91 quand on lui donne à voir ce
 que le problème demande de voir. Reste l'écart avec `search` (200) : le
 réflexe voit 4 ticks devant, la recherche 15 — combler cet écart demanderait
 d'élargir le cône visible ou d'hybrider (piste AlphaZero, toujours ouverte).
+
+---
+
+# Épisode 4 — le filet de sécurité : l'écart restant n'était pas un problème d'apprentissage
+
+L'Épisode 3 change la nature des morts du DQN : il ne reste presque plus de
+stagnation (3/50), mais 19 collisions et 11 noyades — des erreurs d'exécution,
+pas d'hésitation. Question naturelle : peut-on faire *comprendre* à l'agent
+qu'une case tue, de façon fiable ? Réponse courte : on n'a pas besoin qu'il
+l'apprenne. Un simulateur pur (`engine.next_state`) sait déjà, avec
+certitude et sans aucun apprentissage, si une action mène à la mort au tick
+suivant. Autant le consulter directement plutôt que d'espérer qu'un réseau
+généralise ce fait à 100 % à partir d'exemples bruités.
+
+## Le filet (`ShieldedAI`)
+
+Avant de jouer le coup préféré de l'agent enveloppé, on vérifie récursivement
+(profondeur `SHIELD_DEPTH = 3`) qu'il existe une suite d'actions qui garde le
+joueur vivant sur cet horizon — un mini-DFS sur `next_state`, pas une
+recherche de la MEILLEURE suite (ça, c'est le travail de `search`/`guided`),
+juste une preuve qu'une issue existe. Si le coup préféré échoue ce test, on le
+remplace par le meilleur repli qui le passe (même priorité que `HeuristicAI`).
+Coût mesuré : ~0,3 ms en moyenne, 9,5 ms au pire (budget 20 ms intact).
+
+## Résultat (bench 50 graines, déterministe)
+
+| Agent | Score moyen | Médiane | Victoires | Collision | Noyade |
+|---|---:|---:|---:|---:|---:|
+| `dqn` | 91,3 | 78 | 8/50 | 19 | 11 |
+| **`dqn-shield`** | **165,1** | **200** | **35/50** | 2 | 2 |
+| `clone` | 51,4 | 40 | 1/50 | 31 | 14 |
+| **`clone-shield`** | **153,4** | **200** | **29/50** | 8 | 2 |
+
+Sans changer un seul paramètre du réseau, le filet fait passer le dqn de
+8 à **35 victoires sur 50** et le clone de 1 à **29** — la médiane des deux
+saute directement à 200. Les 15 parties encore perdues par le dqn (7
+stagnations, 4 sorties d'écran, 2 collisions, 2 noyades) sont, pour
+l'essentiel, des positions où **aucune** suite de 3 coups ne survit : le
+filet le confirme honnêtement plutôt que de prétendre sauver l'insauvable.
+
+## La limite honnête : sous bruit, le gain fond
+
+| Agent | déterministe → bruit 0,1 | Victoires |
+|---|---:|---:|
+| `dqn-shield` | 165,1 → **19,6** | 35/50 → 0/50 |
+| `clone-shield` | 153,4 → **28,2** | 29/50 → 0/50 |
+
+Explication précise (pas « le bruit perturbe tout ») : `next_state` calcule
+la survie en supposant que la turbulence *actuellement enregistrée* reste
+valable au tick suivant, alors que `Engine._apply_noise()` en retire une
+nouvelle à CHAQUE tick réel. Le filet vérifie donc une survie sous une
+hypothèse qui a de bonnes chances d'être fausse une fraction de seconde
+plus tard. C'est exactement la même faiblesse qui fait s'effondrer `search`
+(200→28) et `guided` (200→22) sous bruit : tout mécanisme qui suppose un
+futur connu perd sa garantie dès que le monde le lui retire à chaque tick.
+Un filet correct sous bruit vérifierait la survie sur plusieurs tirages de
+turbulence (expectimax local) — piste ouverte.
+
+## La leçon de l'Épisode 4
+
+Le réseau apprend une politique globalement bonne (91, puis 165 avec l'aide) ;
+le simulateur, lui, connaît la vérité locale avec certitude. Combiner les deux
+— apprentissage pour la stratégie, vérification exacte pour la sécurité — est
+plus efficace que de faire porter tout le fardeau à l'apprentissage. C'est,
+en modèle réduit, la même idée que `guided` (recherche + politique apprise) :
+le patron AlphaZero encore une fois, à un autre étage du problème.
+
+Reproductible : `--shield` (`--shield-depth` pour l'horizon) sur `play`,
+`duel`, `bench`. Détails et feuille de route dans
+[STRATEGIE.md](STRATEGIE.md), Épisode 4.
 
 ## Références
 

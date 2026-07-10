@@ -272,6 +272,35 @@ des cases déjà vues éliminent 99,99 % du travail) qu'il ne reste presque rien
 AlphaZero aide un moteur de recherche parce qu'au Go il n'existe aucune borne pour élaguer ;
 ici cette borne existe, et elle est plus forte que n'importe quel conseil appris.
 
+## `--shield` — le filet de sécurité (enveloppe n'importe quel agent)
+
+**L'idée en une phrase :** avant de jouer le coup préféré de l'IA, on VÉRIFIE avec le
+simulateur exact qu'il ne mène pas à une mort certaine — et sinon, on joue le meilleur
+coup de repli qui, lui, en garde une.
+
+Le DQN et le clone (Épisode 3) traversent bien les rivières, mais meurent encore
+« en jouant » : 19 collisions et 11 noyades sur 50 pour le dqn — des erreurs d'exécution,
+pas d'hésitation. Or on n'a pas besoin d'espérer que le réseau généralise parfaitement
+« cette case tue » à partir de millions d'exemples bruités : le moteur (`next_state`) le
+sait déjà, exactement, en une poignée de microsecondes. `--shield` consulte cette vérité
+avant chaque coup : si le choix de l'IA ne laisse aucune suite survivante sur 3 ticks
+(`--shield-depth`), il est remplacé par le meilleur repli qui en laisse une.
+
+**Résultat mesuré (bench 50 graines, déterministe) :**
+
+| Agent | Score moyen | Médiane | Victoires |
+|---|---:|---:|---:|
+| `dqn` → `dqn-shield` | 91,3 → **165,1** | 78 → **200** | 8/50 → **35/50** |
+| `clone` → `clone-shield` | 51,4 → **153,4** | 40 → **200** | 1/50 → **29/50** |
+
+Sans changer un seul paramètre du réseau, le filet fait plus que doubler le score moyen
+et porte le dqn à 70 % de victoires. **Mais sous bruit 0,1, le gain fond presque
+entièrement** (dqn-shield : 165 → 19,6, 0 victoire) : le filet suppose que la turbulence
+actuelle persiste au tick suivant, alors que le monde en retire une nouvelle à chaque
+tick — la même faiblesse qui fait s'effondrer `search` sous bruit. Détails, chiffres
+complets et pistes d'approfondissement dans [ANALYSE_IA.md](ANALYSE_IA.md) (Épisode 4)
+et [STRATEGIE.md](STRATEGIE.md).
+
 ---
 
 # L'enquête : quand le coupable était le monde
@@ -306,9 +335,12 @@ Sur **50 graines**, monde complet (routes, troncs mobiles **et nénuphars fixes*
 | `ppo` | IA | 7,0 | 5 | 33 | 0/50 | 0,38 |
 | `clone` | IA | **51,4** | 40 | **200** | 1/50 | 0,36 |
 | `guided` | hybride | **200** | 200 | 200 | **50/50** | 1,42 |
+| `dqn-shield` | hybride | **165,1** | **200** | **200** | **35/50** | 0,32 |
+| `clone-shield` | hybride | **153,4** | **200** | **200** | **29/50** | 0,34 |
 
 *(`dqn` et `clone` : vision grille — Épisode 3 d'[ANALYSE_IA.md](ANALYSE_IA.md) ;
-`ppo` : multi-graines de l'Épisode 2. `heuristic`, `search`, `mcts`, `nn` inchangés.)*
+`dqn-shield`/`clone-shield` : + filet de sécurité (`--shield`) — Épisode 4 ; `ppo` :
+multi-graines de l'Épisode 2. `heuristic`, `search`, `mcts`, `nn` inchangés.)*
 
 Lecture — quatre enseignements :
 
@@ -367,6 +399,8 @@ Sous bruit 0,1 (mêmes 50 graines, mêmes modèles qu'en déterministe) :
 | `clone` | IA | 51,4 → **19,2** | 16 | 61 | 0/50 |
 | `ppo` | IA | 7,0 → 6,3 | 5 | 18 | 0/50 |
 | `nn` | IA | 4,7 → 4,8 | 4 | 10 | 0/50 |
+| `dqn-shield` | hybride | 165,1 → 19,6 | 14 | 88 | 0/50 |
+| `clone-shield` | hybride | 153,4 → 28,2 | 19 | 128 | 0/50 |
 
 Trois enseignements :
 
@@ -389,6 +423,14 @@ Trois enseignements :
    pas (nn 4,7 → 4,8 ; ppo 7,0 → 6,3)… mais ne partaient de rien. (Un entraînement *dans* le
    bruit avait déjà été testé : il n'aide pas — le bruit dégrade le signal d'apprentissage
    plus qu'il ne forge une robustesse.)
+
+4. **Le filet de sécurité tombe dans le même piège que les planificateurs.** En
+   déterministe il fait plus que doubler le dqn (91 → 165) ; sous bruit, son gain fond
+   presque entièrement (165 → 19,6, contre 91 → 18 sans filet). Raison précise : le filet
+   vérifie la survie en supposant que la turbulence *actuelle* persiste au tick suivant,
+   alors que le monde en retire une nouvelle à chaque tick réel — la même hypothèse brisée
+   qui fait chuter `search`. Un filet garanti sous bruit devrait vérifier sur plusieurs
+   tirages de turbulence, pas un seul.
 
 # Reproduire les expériences
 

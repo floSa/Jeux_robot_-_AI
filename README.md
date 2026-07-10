@@ -19,6 +19,7 @@ plusieurs types d'intelligences artificielles sur un terrain identique :
 | `ppo` | IA | policy gradient actor-critic (surrogate clippé, GAE) |
 | `clone` | IA | imitation du planificateur en vision grille + tours DAgger |
 | `guided` | hybride | recherche A* départagée par la politique apprise |
+| `--shield` | hybride | enveloppe n'importe quel agent d'un filet de sécurité exact |
 
 **Robots** = algorithmes déterministes écrits à la main (ils calculent) ; **IA** =
 paramètres appris (évolution, gradient, imitation) ; **hybride** = planification guidée
@@ -50,7 +51,7 @@ Crossy_Road/
 ├── ai_genetic.py    # neuroévolution : GA, shaping, softmax, curriculum, --workers
 ├── ai_qlearning.py  # DQN : replay circulaire, réseau cible, options mesurées, --workers
 ├── ai_ppo.py        # PPO : actor-critic, surrogate clippé, GAE
-├── ai_hybrid.py     # imitation du planificateur (clone, DAgger) + recherche guidée
+├── ai_hybrid.py     # imitation (clone, DAgger) + recherche guidée + filet de sécurité
 ├── shaping.py       # récompenses potentielles (plateforme, alignement)
 ├── ui.py            # monitoring Pygame (rendu 2D + HUD + duel), aucune logique de jeu
 ├── main.py          # CLI : play / duel / train* / bench (--noise, --workers)
@@ -95,9 +96,10 @@ Prérequis : Python ≥ 3.10 et [uv](https://docs.astral.sh/uv/).
 # installation (crée .venv et installe numpy + pygame d'après uv.lock)
 uv sync
 
-# session visuelle : n'importe lequel des 9 agents
+# session visuelle : n'importe lequel des agents
 uv run python main.py --mode play --ai search --seed 3
 uv run python main.py --mode play --ai mcts
+uv run python main.py --mode play --ai dqn --shield   # + filet de sécurité (91 -> 165 en moyenne)
 
 # duel : deux agents côte à côte sur la même graine
 uv run python main.py --mode duel --ai search --ai2 mcts --seed 3
@@ -133,6 +135,8 @@ Arguments principaux :
 | `--workers` | train, train-dqn, train-ppo | éval GA parallèle / entraînements multi-graines (garde le mieux validé) | `0` |
 | `--noise` | play, duel, bench, train* | monde stochastique (proba de turbulence ±1) | `0.0` |
 | `--horizon` | play, duel, bench | coups anticipés par `search` (1-30) | `15` |
+| `--shield` | play, duel, bench | filet de sécurité exact (voir ANALYSE_IA.md, Épisode 4) | désactivé |
+| `--shield-depth` | idem | profondeur du filet | `3` |
 
 En mode `play`, la partie s'arrête à la mort du robot ou à `Y = 200` ; le HUD affiche l'IA
 active, le score, le tick, le temps de calcul du dernier coup (coloré selon le budget de
@@ -228,9 +232,16 @@ moyenne et gagne 8 parties sur 50** (médiane 78, record 200), et le clone par i
 Le déblocage n'est pas venu d'un meilleur algorithme mais de la **représentation** : une
 « vision grille » égocentrique de la praticabilité des cases, **projetée aux instants
 t..t+3** (le monde périodique rend la projection exacte), plus DAgger pour l'imitation.
+
+**Avec `--shield`** (filet de sécurité : le simulateur exact vérifie chaque coup avant de
+le jouer), le **DQN monte à 165 de moyenne et 35 victoires sur 50** (le clone à 153 et
+29/50) — sans changer un seul paramètre du réseau. Ce gain fond presque entièrement sous
+bruit, pour une raison précise et documentée (le filet suppose que la turbulence actuelle
+persiste, comme les planificateurs).
+
 L'enquête complète — pourquoi les IA plafonnaient, ce que les remèdes de la littérature ont
-réellement donné (verdict d'ablation contre-intuitif), et le déblocage par la vision — est
-dans [ANALYSE_IA.md](ANALYSE_IA.md).
+réellement donné (verdict d'ablation contre-intuitif), le déblocage par la vision, et le
+filet de sécurité — est dans [ANALYSE_IA.md](ANALYSE_IA.md).
 
 En monde **stochastique** (`--noise 0.1`), les planificateurs s'effondrent (`search`
 200 → 28) et tout le monde se retrouve dans un mouchoir : cinq approches radicalement
