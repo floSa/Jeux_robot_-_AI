@@ -3,6 +3,12 @@
 > 🧭 **Pour reprendre le projet** : [STRATEGIE.md](STRATEGIE.md) — la méthode, toutes les
 > hypothèses testées (adoptées comme rejetées) avec leurs chiffres, l'état actuel, et la
 > feuille de route argumentée vers « 200 à tous les coups ».
+>
+> 🕸️ **Carte du code** : [`graphify-out/GRAPH_REPORT.md`](graphify-out/GRAPH_REPORT.md) —
+> graphe de connaissances du projet (code + docs), généré par le skill `graphify`. Ouvrir
+> `graphify-out/graph.html` dans un navigateur pour l'explorer visuellement, ou poser une
+> question en langage naturel sur le code — un assistant équipé du skill interroge le
+> graphe directement au lieu de tout relire.
 
 ## Description
 
@@ -59,6 +65,7 @@ Crossy_Road/
 ├── ROBOTS.md        # robots & IA vulgarisés : stratégies, combinatoire, résultats
 ├── ANALYSE_IA.md    # l'enquête IA en 3 épisodes : causes, ablations, déblocage (sourcé)
 ├── STRATEGIE.md     # journal de recherche + guide de reprise + feuille de route vers 200
+├── graphify-out/    # graphe de connaissances du projet (skill graphify) — GRAPH_REPORT.md, graph.html
 └── pyproject.toml   # dépendances gérées par uv (numpy, pygame)
 ```
 

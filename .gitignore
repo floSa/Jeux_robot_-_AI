@@ -12,3 +12,9 @@ models/
 # Divers
 .DS_Store
 Thumbs.db
+
+# Graphify : bookkeeping propre à cette machine (chemins absolus), régénéré
+# automatiquement au prochain run/update. Le reste (graph.json, GRAPH_REPORT.md,
+# graph.html, cache/, cost.json, manifest.json) est suivi par Git.
+graphify-out/.graphify_python
+graphify-out/.graphify_root
