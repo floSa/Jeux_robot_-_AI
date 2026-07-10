@@ -434,9 +434,10 @@ plan d'amélioration priorisé sont dans **[ANALYSE_IA.md](ANALYSE_IA.md)**.
 
 # Pistes restantes (non implémentées)
 
-*(La mémoire, le shaping, le curriculum, les retours multi-pas, le Double DQN et
-l'entraînement long ont été implémentés et mesurés — voir
-[ANALYSE_IA.md](ANALYSE_IA.md), Épisode 2. Restent :)*
+*(La mémoire, le shaping, le curriculum, les retours multi-pas, le Double DQN,
+l'entraînement long, la vision grille et DAgger ont été implémentés et mesurés — voir
+[ANALYSE_IA.md](ANALYSE_IA.md). La feuille de route priorisée vers « 200 à tous les
+coups » est dans [STRATEGIE.md](STRATEGIE.md). Restent :)*
 
 1. **Lignes de train** — des rails où un train traverse périodiquement et **bloque toute la
    ligne** deux ticks, avec un signal d'alerte quelques coups à l'avance (la phase des

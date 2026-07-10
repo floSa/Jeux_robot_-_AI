@@ -1,5 +1,9 @@
 # Crossy IA — simulateur Crossy Road et comparateur de robots
 
+> 🧭 **Pour reprendre le projet** : [STRATEGIE.md](STRATEGIE.md) — la méthode, toutes les
+> hypothèses testées (adoptées comme rejetées) avec leurs chiffres, l'état actuel, et la
+> feuille de route argumentée vers « 200 à tous les coups ».
+
 ## Description
 
 Copie fonctionnelle de Crossy Road sur grille, conçue pour faire s'affronter et se comparer
@@ -53,6 +57,7 @@ Crossy_Road/
 ├── AUDIT.md         # audit du code : schémas d'architecture et plan d'amélioration
 ├── ROBOTS.md        # robots & IA vulgarisés : stratégies, combinatoire, résultats
 ├── ANALYSE_IA.md    # l'enquête IA en 3 épisodes : causes, ablations, déblocage (sourcé)
+├── STRATEGIE.md     # journal de recherche + guide de reprise + feuille de route vers 200
 └── pyproject.toml   # dépendances gérées par uv (numpy, pygame)
 ```
 

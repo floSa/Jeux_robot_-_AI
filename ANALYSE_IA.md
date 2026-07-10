@@ -3,7 +3,9 @@
 Ce document explique, mesures et littérature à l'appui, **pourquoi les agents appris**
 (`dqn`, `ppo`, `nn`, `clone`) plafonnent très bas à ce jeu, et **comment les améliorer**.
 La seconde partie (« Épisode 2 ») rapporte ce qui s'est passé quand on a réellement
-implémenté les remèdes de la littérature — avec un verdict d'ablation qui surprend.
+implémenté les remèdes de la littérature — avec un verdict d'ablation qui surprend —
+et l'Épisode 3 le déblocage par la représentation. La synthèse « reprendre le projet »
+et la feuille de route sont dans [STRATEGIE.md](STRATEGIE.md).
 
 > Note de métrique : ici la « victoire » (atteindre Y = 200) n'est qu'un **plafond de
 > simulation** — un indicateur que la solution fonctionne. La vraie métrique est le
