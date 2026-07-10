@@ -38,8 +38,11 @@ import numpy as np
 from config import (
     ACTIONS,
     Action,
+    DQN_ARCHITECTURE,
     DQN_BATCH_SIZE,
     DQN_BUFFER_SIZE,
+    DQN_CONV_CHANNELS,
+    DQN_CONV_KERNEL,
     DQN_CURRICULUM_PROB,
     DQN_CURRICULUM_WEIGHTS,
     DQN_DOUBLE,
@@ -62,6 +65,7 @@ from config import (
 )
 from engine import Engine
 from ai_base import BaseAI
+from conv_neural import ConvQNet
 from neural import MLP, Layout
 from sensors import FrameStack, SENSOR_SETS, sensor_for_input
 from shaping import POTENTIALS, base_reward, shaped_reward
@@ -70,6 +74,29 @@ from shaping import POTENTIALS, base_reward, shaped_reward
 SENSE, SENSOR_SIZE = SENSOR_SETS[DQN_SENSOR]
 POTENTIAL = POTENTIALS.get(RL_SHAPING)  # None si "off" : récompense brute
 DQN_LAYOUT: Layout = (SENSOR_SIZE * FRAME_STACK, DQN_HIDDEN_SIZE, NN_OUTPUT_SIZE)
+
+
+def _build_net(seed: int = 0, flat: np.ndarray | None = None):
+    """Construit le réseau en ligne selon DQN_ARCHITECTURE (config, Épisode 7).
+
+    Signature volontairement alignée sur celle de `MLP` pour que le reste de
+    l'entraîneur (copy/forward/backward/adam_step/get_flat) reste agnostique
+    de l'architecture réellement utilisée.
+    """
+    if DQN_ARCHITECTURE == "conv":
+        return ConvQNet(
+            DQN_LAYOUT[0], DQN_CONV_CHANNELS, DQN_CONV_KERNEL, DQN_LAYOUT[1],
+            DQN_LAYOUT[2], flat=flat, seed=seed,
+        )
+    return MLP(DQN_LAYOUT, flat=flat, seed=seed)
+
+
+def load_dqn_net(path: str):
+    """Charge un modèle DQN quel que soit son architecture (rétro-compatible :
+    les anciens fichiers sans le marqueur `kind` sont des MLP)."""
+    with np.load(path) as data:
+        kind = str(data["kind"]) if "kind" in data else "mlp"
+    return ConvQNet.load(path) if kind == "conv" else MLP.load(path)
 
 
 class DQNAI(BaseAI):
@@ -83,7 +110,7 @@ class DQNAI(BaseAI):
     name = "dqn"
     family = "ia"
 
-    def __init__(self, net: MLP, sense_fn=None, stack_k: int | None = None) -> None:
+    def __init__(self, net, sense_fn=None, stack_k: int | None = None) -> None:
         super().__init__()
         self.net = net
         if sense_fn is None:
@@ -95,7 +122,7 @@ class DQNAI(BaseAI):
 
     @classmethod
     def from_file(cls, path: str = DQN_MODEL_PATH) -> "DQNAI":
-        return cls(MLP.load(path))
+        return cls(load_dqn_net(path))
 
     def get_move(self, game_state: Engine) -> Action:
         q = self.net.forward(self.stack.push(self.sense(game_state)))
@@ -144,7 +171,7 @@ class DQNTrainer:
         self.np_rng = np.random.default_rng(seed)
         self.world_noise = world_noise  # bruit du monde pendant l'entraînement
         self.input_size = DQN_LAYOUT[0]
-        self.online = MLP(DQN_LAYOUT, seed=seed)
+        self.online = _build_net(seed=seed)
         self.target = self.online.copy()
         self.buffer = Replay(DQN_BUFFER_SIZE, self.input_size, self.np_rng)
         self.best_net = self.online.copy()
@@ -302,7 +329,7 @@ def train_multi(
     world_noise: float = 0.0,
     base_seed: int = 0,
     log: Callable[[str], None] = print,
-) -> tuple[MLP, float]:
+):
     """`workers` entraînements indépendants en parallèle ; garde le mieux validé.
 
     L'issue d'un entraînement par renforcement est très sensible à la graine
@@ -320,4 +347,4 @@ def train_multi(
                 best = (val, seed, flat)
     assert best is not None
     log(f"  retenu : graine {best[1]} (validation {best[0]:.1f})")
-    return MLP(DQN_LAYOUT, flat=best[2]), best[0]
+    return _build_net(flat=best[2]), best[0]

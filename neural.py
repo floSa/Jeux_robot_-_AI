@@ -132,7 +132,9 @@ class MLP:
         directory = os.path.dirname(path)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        np.savez_compressed(path, layout=np.asarray(self.layout), genome=self.get_flat())
+        np.savez_compressed(
+            path, kind=np.asarray("mlp"), layout=np.asarray(self.layout), genome=self.get_flat()
+        )
 
     @classmethod
     def load(cls, path: str) -> "MLP":

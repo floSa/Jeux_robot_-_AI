@@ -115,6 +115,15 @@ PHI_ALIGN_CAP: Final[int] = 8                 # écart au-delà duquel le potent
 
 # --- DQN ---
 DQN_SENSOR: Final[str] = "grid"               # "grid" (vision grille) ou "full" (42 agrégés)
+# Architecture (piste B.2, STRATEGIE.md Épisode 7) : un MLP dense doit
+# réapprendre chaque motif de praticabilité à chaque colonne indépendamment ;
+# une convolution 1D partage ses poids entre colonnes (équivariance par
+# translation). Mesuré : conv 6 canaux/noyau 5 bat le MLP dense de +45 %
+# (83,4 -> 120,6, 4000 ép./2 graines) ; plus de capacité (8 canaux, noyau 7)
+# nuit, comme partout ailleurs à ce budget d'entraînement.
+DQN_ARCHITECTURE: Final[str] = "conv"         # "conv" (mesuré gagnant) ou "mlp"
+DQN_CONV_CHANNELS: Final[int] = 6
+DQN_CONV_KERNEL: Final[int] = 5
 DQN_HIDDEN_SIZE: Final[int] = 64
 DQN_LR: Final[float] = 1e-3
 DQN_GAMMA: Final[float] = 0.97
