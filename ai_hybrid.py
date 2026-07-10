@@ -23,6 +23,7 @@ défaut : précision 73 -> 87 %) ; à l'inférence ils sont déduits du modèle.
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Callable
 
 import numpy as np
@@ -49,6 +50,8 @@ from config import (
     RECULER,
     SEARCH_HORIZON,
     SHIELD_DEPTH,
+    SHIELD_RESCUE_AFTER,
+    SHIELD_RESCUE_DEPTH,
 )
 from engine import Engine
 from ai_base import BaseAI
@@ -296,10 +299,16 @@ class ShieldedAI(BaseAI):
     remplace par le meilleur coup restant qui, lui, en laisse une (même ordre
     de priorité que HeuristicAI : AVANCER > proximité du centre > RECULER).
 
-    Ne protège QUE contre les morts prouvables dans l'horizon du filet
-    (collision, noyade, sortie d'écran imminentes) — pas contre la
-    stagnation, qui s'accumule sur STAGNATION_LIMIT ticks et n'est pas un
-    événement local vérifiable coup par coup.
+    Deux protections, mesurées séparément (voir STRATEGIE.md, piste A') :
+
+    1. SURVIE (toujours active) : les morts prouvables dans l'horizon du
+       filet (collision, noyade, sortie d'écran imminentes).
+    2. ANTI-STAGNATION (SHIELD_RESCUE_AFTER ticks sans progrès) : la
+       stagnation n'est pas un événement local — l'agent survit mais
+       tourne en rond jusqu'à la limite des 120 ticks. Quand le compteur
+       monte, le filet cherche par BFS exact borné le premier coup d'un
+       chemin qui atteint une NOUVELLE ligne max en <= SHIELD_RESCUE_DEPTH
+       ticks, et l'impose s'il existe (et s'il est sûr).
     """
 
     family = "hybride"
@@ -316,6 +325,43 @@ class ShieldedAI(BaseAI):
         super().reset()
         self.inner.reset()
 
+    def _rescue_move(self, engine: Engine) -> Action | None:
+        """Premier coup d'un chemin qui gagne une ligne max (BFS exact borné).
+
+        Exploré sur les états (x, y, profondeur) dédupliqués : au plus
+        largeur x lignes x profondeur états, chacun en O(1) via les tables
+        mémoïsées du moteur — quelques milliers d'appels au pire, et
+        uniquement quand l'agent stagne déjà depuis SHIELD_RESCUE_AFTER ticks.
+        """
+        target = engine.score + 1
+        x, y, tick = engine.player_x, engine.player_y, engine.tick
+        seen: set[tuple[int, int, int]] = set()
+        queue: deque[tuple[int, int, int, Action]] = deque()
+        for action in self._PRIORITY:
+            nx, ny, alive = engine.next_state(x, y, tick, action)
+            if not alive:
+                continue
+            if ny >= target:
+                return action
+            if (nx, ny, 1) not in seen:
+                seen.add((nx, ny, 1))
+                queue.append((nx, ny, 1, action))
+        while queue:
+            cx, cy, d, first = queue.popleft()
+            if d >= SHIELD_RESCUE_DEPTH:
+                continue
+            for action in ACTIONS:
+                nx, ny, alive = engine.next_state(cx, cy, tick + d, action)
+                if not alive:
+                    continue
+                if ny >= target:
+                    return first
+                key = (nx, ny, d + 1)
+                if key not in seen:
+                    seen.add(key)
+                    queue.append((nx, ny, d + 1, first))
+        return None
+
     def get_move(self, game_state: Engine) -> Action:
         preferred = self.inner.get_move(game_state)
         x, y, tick = game_state.player_x, game_state.player_y, game_state.tick
@@ -323,6 +369,13 @@ class ShieldedAI(BaseAI):
         def safe(action: Action) -> bool:
             nx, ny, alive = game_state.next_state(x, y, tick, action)
             return alive and _survives(game_state, nx, ny, tick + 1, self.depth - 1)
+
+        # anti-stagnation : l'agent tourne en rond -> imposer un chemin qui progresse
+        if game_state.ticks_since_progress >= SHIELD_RESCUE_AFTER:
+            rescue = self._rescue_move(game_state)
+            if rescue is not None and rescue != preferred and safe(rescue):
+                self.stats["sauvetages"] = self.stats.get("sauvetages", 0.0) + 1.0
+                return rescue
 
         if safe(preferred):
             return preferred

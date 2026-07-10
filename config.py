@@ -171,7 +171,16 @@ GUIDED_PRIOR_DEPTH: Final[int] = 2            # profondeur max où le prior guid
 # Vérifie avec le simulateur EXACT (pas d'apprentissage, pas d'approximation)
 # qu'une suite d'actions survivante existe sur cet horizon avant de jouer le
 # coup préféré de l'agent enveloppé. Voir STRATEGIE.md, piste A.
-SHIELD_DEPTH: Final[int] = 3
+# Profondeur 7 mesurée optimale : dqn-shield 165 -> 178,5 (plateau dès d=5),
+# clone-shield 153 -> 180,4 (gagne encore à d=7 — le réseau le plus faible
+# profite le plus de la vérification profonde). Coût max mesuré : 4,7 ms / 20.
+SHIELD_DEPTH: Final[int] = 7
+# Sauvetage anti-stagnation (piste A'.3) : quand l'agent n'a plus progressé
+# depuis SHIELD_RESCUE_AFTER ticks, le filet cherche (BFS exact borné) le
+# premier coup d'un chemin qui atteint une NOUVELLE ligne max en au plus
+# SHIELD_RESCUE_DEPTH ticks, et l'impose s'il existe.
+SHIELD_RESCUE_AFTER: Final[int] = 60
+SHIELD_RESCUE_DEPTH: Final[int] = 8
 
 # --- UI ---
 CELL_SIZE: Final[int] = 32
