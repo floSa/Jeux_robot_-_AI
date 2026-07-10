@@ -240,23 +240,47 @@ plus qu'il n'apporte. **Piste B.1 classée non retenue** ; le cône actuel
 via B.2 (convolution 1D) et B.3 (DQfD/init clone) — des changements
 d'architecture, pas de taille d'entrée.
 
-## 6. Feuille de route vers « 200 à tous les coups »
+## 6. Épisode 6 — piste A″ testée et réfutée : le filet robuste au bruit ne suffit pas
+
+Implémenté `_survives_noisy` : au lieu de figer la turbulence courante,
+chaque tick simulé re-tire une turbulence stochastique (miroir exact
+d'`Engine._apply_noise`, sur une copie locale des offsets — l'état réel
+n'est jamais modifié). La vérification exige qu'une fraction
+(`SHIELD_NOISE_THRESHOLD`) de `SHIELD_NOISE_SAMPLES` tirages indépendants
+trouve une suite survivante sur `SHIELD_NOISE_DEPTH` ticks. Activé
+automatiquement sous `--noise` (le mode déterministe est inchangé).
+
+**Résultat (50 graines, bruit 0,1) : aucun gain.**
+
+| Agent | déterministe (filet exact) | + filet robuste au bruit | sans filet |
+|---|---:|---:|---:|
+| `dqn-shield` | — | 19,6 | 18,0 |
+| `clone-shield` | — | 28,2 | 19,2 |
+
+Chiffres identiques (aux arrondis près) à ceux du filet simple déjà mesurés.
+**Diagnostic précis, pas un simple « ça n'a pas aidé »** : instrumentation du
+taux d'intervention — **0 % sur 207 ticks réels**, y compris en relevant le
+seuil d'exigence à 0,9 (quasi tous les tirages doivent survivre). Le
+mécanisme « existe-t-il une suite qui survit » est presque toujours vrai dès
+qu'on autorise 5 actions sur quelques ticks (rester sur place suffit souvent
+à survivre localement) — ce n'est donc PAS un problème de réglage de seuil
+ou de profondeur : la question posée est la mauvaise question. Un filet
+réellement robuste au bruit devrait comparer la VALEUR espérée des actions
+(expectimax complet sur plusieurs tirages), pas leur existence — une
+reconstruction, pas un ajustement. **Classé non retenu pour l'instant** ;
+le code reste dans `ai_hybrid.py` (inerte sous bruit, sans coût en
+déterministe) pour une reprise éventuelle avec la bonne formulation.
+
+## 7. Feuille de route vers « 200 à tous les coups »
 
 Le constat de départ (avant le filet) : le dqn mourait **en jouant**
-(collisions 19, noyades 11, sorties 9), plus en hésitant. La piste A puis A′
-ont comblé l'essentiel de cet écart en monde déterministe : **43/50
-victoires, 187,9 de moyenne**. Restent :
+(collisions 19, noyades 11, sorties 9), plus en hésitant. Les pistes A, A′
+ont comblé l'essentiel de cet écart en monde déterministe (**43/50
+victoires, 187,9 de moyenne**) ; A″ (bruit) a été testée et n'a pas suffi
+en l'état — une reconstruction, pas un réglage, la reporterait. La piste B
+(réflexe pur) devient la priorité :
 
-### Piste A″ — dernier kilomètre du filet (le plus mûr)
-
-- **Filet robuste au bruit** : vérifier la survie sur plusieurs tirages de
-  turbulence plutôt qu'un seul (expectimax local sur `_survives`) — seule
-  faiblesse encore non traitée (sous bruit, le gain fond toujours).
-- **Sauvetage à horizon variable** : certaines stagnations attendent un
-  cycle de tronc complet (~57 ticks) ; un `SHIELD_RESCUE_DEPTH` adaptatif
-  (ou mémoïsé sur les cycles déjà vus) pourrait grappiller les derniers %.
-
-### Piste B — pousser le réflexe pur, sans filet (le vrai défi)
+### Piste B — pousser le réflexe pur, sans filet (le vrai défi, priorité désormais)
 
 1. ~~Élargir le cône de vision~~ — **testé et réfuté** (Épisode 5).
 2. **Architecture convolutionnelle 1D sur les colonnes** : un MLP dense doit
@@ -293,7 +317,7 @@ levier d'architecture crédible pour un réflexe fort sans filet ni recherche.
 - **Lignes de train** (gameplay), **tournoi Elo** : voir « Pistes restantes »
   de ROBOTS.md.
 
-## 7. Reprendre le projet en 5 minutes
+## 8. Reprendre le projet en 5 minutes
 
 ```bash
 uv sync                                                  # environnement

@@ -181,6 +181,16 @@ SHIELD_DEPTH: Final[int] = 7
 # SHIELD_RESCUE_DEPTH ticks, et l'impose s'il existe.
 SHIELD_RESCUE_AFTER: Final[int] = 60
 SHIELD_RESCUE_DEPTH: Final[int] = 8
+# Filet robuste au bruit (piste A'', monde --noise) : le filet déterministe
+# suppose la turbulence actuelle figée, alors qu'Engine._apply_noise() en
+# retire une nouvelle à CHAQUE tick réel (avant même la transition en cours).
+# Sous --noise, la survie est donc vérifiée sur SHIELD_NOISE_SAMPLES tirages
+# indépendants de turbulence future (expectimax local échantillonné),
+# jusqu'à SHIELD_NOISE_DEPTH ticks (plus court que SHIELD_DEPTH : chaque
+# tirage répète toute l'exploration, le coût multiplie par SHIELD_NOISE_SAMPLES).
+SHIELD_NOISE_SAMPLES: Final[int] = 6
+SHIELD_NOISE_DEPTH: Final[int] = 4
+SHIELD_NOISE_THRESHOLD: Final[float] = 0.5  # part des tirages qui doit survivre
 
 # --- UI ---
 CELL_SIZE: Final[int] = 32

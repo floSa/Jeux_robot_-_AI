@@ -23,6 +23,7 @@ défaut : précision 73 -> 87 %) ; à l'inférence ils sont déduits du modèle.
 
 from __future__ import annotations
 
+import random
 from collections import deque
 from typing import Callable
 
@@ -50,6 +51,9 @@ from config import (
     RECULER,
     SEARCH_HORIZON,
     SHIELD_DEPTH,
+    SHIELD_NOISE_DEPTH,
+    SHIELD_NOISE_SAMPLES,
+    SHIELD_NOISE_THRESHOLD,
     SHIELD_RESCUE_AFTER,
     SHIELD_RESCUE_DEPTH,
 )
@@ -287,6 +291,43 @@ def _survives(engine: Engine, x: int, y: int, tick: int, depth: int) -> bool:
     return False
 
 
+def _survives_noisy(
+    engine: Engine,
+    x: int,
+    y: int,
+    tick: int,
+    depth: int,
+    rng: random.Random,
+    offsets: dict[int, int],
+) -> bool:
+    """Comme `_survives`, mais retire une turbulence à CHAQUE tick simulé au
+    lieu de figer les offsets courants (miroir exact d'`Engine._apply_noise`,
+    exécuté sur une copie locale — l'état réel du monde n'est pas modifié).
+
+    Un seul tirage ne prouve rien (le vrai futur est un tirage parmi
+    d'autres) : `safe_under_noise` appelle cette fonction plusieurs fois avec
+    des tirages indépendants et exige qu'une fraction suffisante survive
+    (expectimax local échantillonné, pas une preuve — voir STRATEGIE.md).
+    """
+    if depth <= 0:
+        return True
+    new_offsets = dict(offsets)
+    for ly in range(max(0, y - 5), y + 26):
+        line = engine.line_at(ly)
+        if line.blocks and rng.random() < engine.noise:
+            new_offsets[ly] = (new_offsets.get(ly, 0) + rng.choice((-1, 1))) % engine.width
+    saved = engine._noise_offsets
+    engine._noise_offsets = new_offsets
+    try:
+        for action in ACTIONS:
+            nx, ny, alive = engine.next_state(x, y, tick, action)
+            if alive and _survives_noisy(engine, nx, ny, tick + 1, depth - 1, rng, new_offsets):
+                return True
+        return False
+    finally:
+        engine._noise_offsets = saved
+
+
 class ShieldedAI(BaseAI):
     """Enveloppe n'importe quel agent d'un filet de sécurité EXACT.
 
@@ -309,6 +350,13 @@ class ShieldedAI(BaseAI):
        monte, le filet cherche par BFS exact borné le premier coup d'un
        chemin qui atteint une NOUVELLE ligne max en <= SHIELD_RESCUE_DEPTH
        ticks, et l'impose s'il existe (et s'il est sûr).
+
+    Sous monde stochastique (`game_state.noise > 0`, piste A'') : la
+    vérification de survie bascule sur `_survives_noisy`, qui retire une
+    turbulence à chaque tick simulé au lieu de la figer, sur
+    SHIELD_NOISE_SAMPLES tirages indépendants (exigence : au moins
+    SHIELD_NOISE_THRESHOLD de la fraction qui survit). Le rescue anti-
+    stagnation reste déterministe (piste ouverte, non traitée ici).
     """
 
     family = "hybride"
@@ -320,6 +368,7 @@ class ShieldedAI(BaseAI):
         self.inner = inner
         self.depth = depth
         self.name = f"{inner.name}-shield"
+        self._rng = random.Random(0)
 
     def reset(self) -> None:
         super().reset()
@@ -362,13 +411,28 @@ class ShieldedAI(BaseAI):
                     queue.append((nx, ny, d + 1, first))
         return None
 
+    def _safe_noisy(self, game_state: Engine, x: int, y: int, tick: int, action: Action) -> bool:
+        nx, ny, alive = game_state.next_state(x, y, tick, action)
+        if not alive:
+            return False
+        offsets = dict(game_state._noise_offsets)
+        survived = sum(
+            _survives_noisy(game_state, nx, ny, tick + 1, SHIELD_NOISE_DEPTH - 1, self._rng, offsets)
+            for _ in range(SHIELD_NOISE_SAMPLES)
+        )
+        return survived / SHIELD_NOISE_SAMPLES >= SHIELD_NOISE_THRESHOLD
+
     def get_move(self, game_state: Engine) -> Action:
         preferred = self.inner.get_move(game_state)
         x, y, tick = game_state.player_x, game_state.player_y, game_state.tick
 
-        def safe(action: Action) -> bool:
-            nx, ny, alive = game_state.next_state(x, y, tick, action)
-            return alive and _survives(game_state, nx, ny, tick + 1, self.depth - 1)
+        if game_state.noise > 0.0:
+            def safe(action: Action) -> bool:
+                return self._safe_noisy(game_state, x, y, tick, action)
+        else:
+            def safe(action: Action) -> bool:
+                nx, ny, alive = game_state.next_state(x, y, tick, action)
+                return alive and _survives(game_state, nx, ny, tick + 1, self.depth - 1)
 
         # anti-stagnation : l'agent tourne en rond -> imposer un chemin qui progresse
         if game_state.ticks_since_progress >= SHIELD_RESCUE_AFTER:
