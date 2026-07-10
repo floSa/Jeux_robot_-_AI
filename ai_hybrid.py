@@ -30,9 +30,13 @@ import numpy as np
 from config import (
     ACTIONS,
     Action,
+    ATTENDRE,
+    AVANCER,
     CENTER_X,
     DAGGER_ROUNDS,
     DAGGER_SAMPLES,
+    DROITE,
+    GAUCHE,
     GUIDED_PRIOR_DEPTH,
     IMITATION_BATCH,
     IMITATION_EPOCHS,
@@ -42,7 +46,9 @@ from config import (
     NN_OUTPUT_SIZE,
     POLICY_HIDDEN_SIZE,
     POLICY_MODEL_PATH,
+    RECULER,
     SEARCH_HORIZON,
+    SHIELD_DEPTH,
 )
 from engine import Engine
 from ai_base import BaseAI
@@ -255,3 +261,73 @@ class GuidedSearchAI(SearchAI):
         )
         self.stats["priors"] = len(self._prior_cache)
         return move
+
+
+# ------------------------------------------------------------------ filet
+
+def _survives(engine: Engine, x: int, y: int, tick: int, depth: int) -> bool:
+    """Existe-t-il une suite d'actions qui garde le joueur vivant `depth` ticks ?
+
+    Recherche pure (n'écrit rien dans `engine`), utilisée uniquement comme
+    VÉRIFICATION de sécurité (ShieldedAI) — elle ne dit pas quel chemin est
+    bon, seulement si mourir dans `depth` ticks est ÉVITABLE. Coût : jusqu'à
+    5^depth appels à `next_state` (arithmétique + accès table, quelques µs
+    chacun) ; en pratique bien moins car la première branche vivante arrête
+    la recherche (court-circuit `any`).
+    """
+    if depth <= 0:
+        return True
+    for action in ACTIONS:
+        nx, ny, alive = engine.next_state(x, y, tick, action)
+        if alive and _survives(engine, nx, ny, tick + 1, depth - 1):
+            return True
+    return False
+
+
+class ShieldedAI(BaseAI):
+    """Enveloppe n'importe quel agent d'un filet de sécurité EXACT.
+
+    Réponse à l'observation (STRATEGIE.md, piste A) : plutôt que d'espérer
+    qu'une politique apprise généralise assez bien le concept « cette case
+    tue » — via des millions d'exemples et un signal de récompense forcément
+    imparfait — on le VÉRIFIE directement avec le simulateur, qui le sait
+    avec certitude et sans aucun apprentissage. Si le coup préféré de l'agent
+    enveloppé ne laisse aucune suite survivante sur SHIELD_DEPTH ticks, on le
+    remplace par le meilleur coup restant qui, lui, en laisse une (même ordre
+    de priorité que HeuristicAI : AVANCER > proximité du centre > RECULER).
+
+    Ne protège QUE contre les morts prouvables dans l'horizon du filet
+    (collision, noyade, sortie d'écran imminentes) — pas contre la
+    stagnation, qui s'accumule sur STAGNATION_LIMIT ticks et n'est pas un
+    événement local vérifiable coup par coup.
+    """
+
+    family = "hybride"
+
+    _PRIORITY: tuple[Action, ...] = (AVANCER, ATTENDRE, GAUCHE, DROITE, RECULER)
+
+    def __init__(self, inner: BaseAI, depth: int = SHIELD_DEPTH) -> None:
+        super().__init__()
+        self.inner = inner
+        self.depth = depth
+        self.name = f"{inner.name}-shield"
+
+    def reset(self) -> None:
+        super().reset()
+        self.inner.reset()
+
+    def get_move(self, game_state: Engine) -> Action:
+        preferred = self.inner.get_move(game_state)
+        x, y, tick = game_state.player_x, game_state.player_y, game_state.tick
+
+        def safe(action: Action) -> bool:
+            nx, ny, alive = game_state.next_state(x, y, tick, action)
+            return alive and _survives(game_state, nx, ny, tick + 1, self.depth - 1)
+
+        if safe(preferred):
+            return preferred
+        self.stats["interventions"] = self.stats.get("interventions", 0.0) + 1.0
+        for action in self._PRIORITY:
+            if action != preferred and safe(action):
+                return action
+        return preferred  # aucune issue : mort inévitable, le choix de l'agent vaut un autre

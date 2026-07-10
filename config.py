@@ -167,6 +167,12 @@ DAGGER_ROUNDS: Final[int] = 2                 # tours DAgger (l'élève conduit,
 DAGGER_SAMPLES: Final[int] = 30_000           # exemples collectés par tour
 GUIDED_PRIOR_DEPTH: Final[int] = 2            # profondeur max où le prior guide le tri
 
+# --- Filet de sécurité (ShieldedAI, hybride) ---
+# Vérifie avec le simulateur EXACT (pas d'apprentissage, pas d'approximation)
+# qu'une suite d'actions survivante existe sur cet horizon avant de jouer le
+# coup préféré de l'agent enveloppé. Voir STRATEGIE.md, piste A.
+SHIELD_DEPTH: Final[int] = 3
+
 # --- UI ---
 CELL_SIZE: Final[int] = 32
 VIEW_ROWS: Final[int] = 21                   # lignes visibles à l'écran

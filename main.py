@@ -43,6 +43,7 @@ from config import (
     SEARCH_HORIZON,
     SEARCH_HORIZON_MAX,
     SEARCH_HORIZON_MIN,
+    SHIELD_DEPTH,
     TARGET_SCORE,
 )
 from engine import Engine
@@ -55,6 +56,7 @@ from ai_ppo import PPOAI, PPOTrainer, train_multi as train_ppo_multi
 from ai_hybrid import (
     CloneAI,
     GuidedSearchAI,
+    ShieldedAI,
     collect_dagger,
     collect_dataset,
     train_policy,
@@ -95,24 +97,32 @@ def _model_path(name: str, override: str | None) -> str:
     return path
 
 
-def build_ai(name: str, model_override: str | None = None, horizon: int = SEARCH_HORIZON) -> BaseAI:
+def build_ai(
+    name: str,
+    model_override: str | None = None,
+    horizon: int = SEARCH_HORIZON,
+    shield: bool = False,
+    shield_depth: int = SHIELD_DEPTH,
+) -> BaseAI:
     if name == "heuristic":
-        return HeuristicAI()
-    if name == "search":
-        return SearchAI(horizon=horizon)
-    if name == "mcts":
-        return MCTSAI()
-    if name == "nn":
-        return NeuralAI.from_file(_model_path(name, model_override))
-    if name == "dqn":
-        return DQNAI.from_file(_model_path(name, model_override))
-    if name == "ppo":
-        return PPOAI.from_file(_model_path(name, model_override))
-    if name == "clone":
-        return CloneAI.from_file(_model_path(name, model_override))
-    if name == "guided":
-        return GuidedSearchAI.from_file(_model_path(name, model_override))
-    raise SystemExit(f"agent inconnu : {name}")
+        ai: BaseAI = HeuristicAI()
+    elif name == "search":
+        ai = SearchAI(horizon=horizon)
+    elif name == "mcts":
+        ai = MCTSAI()
+    elif name == "nn":
+        ai = NeuralAI.from_file(_model_path(name, model_override))
+    elif name == "dqn":
+        ai = DQNAI.from_file(_model_path(name, model_override))
+    elif name == "ppo":
+        ai = PPOAI.from_file(_model_path(name, model_override))
+    elif name == "clone":
+        ai = CloneAI.from_file(_model_path(name, model_override))
+    elif name == "guided":
+        ai = GuidedSearchAI.from_file(_model_path(name, model_override))
+    else:
+        raise SystemExit(f"agent inconnu : {name}")
+    return ShieldedAI(ai, depth=shield_depth) if shield else ai
 
 
 def run_episode(
@@ -146,7 +156,7 @@ def run_episode(
 def cmd_play(args: argparse.Namespace) -> None:
     from ui import Renderer  # import différé : l'entraînement reste sans pygame
 
-    ai = build_ai(args.ai, args.model, args.horizon)
+    ai = build_ai(args.ai, args.model, args.horizon, args.shield, args.shield_depth)
     engine = Engine(seed=args.seed, noise=args.noise)
     suffix = f" T+{args.horizon}" if ai.name == "search" else ""
     renderer = Renderer(title=f"Crossy IA — {ai.name}{suffix}")
@@ -175,8 +185,8 @@ def cmd_duel(args: argparse.Namespace) -> None:
     """Deux agents sur la même graine (et le même bruit), côte à côte."""
     from ui import DuelRenderer  # import différé
 
-    ai1 = build_ai(args.ai, args.model, args.horizon)
-    ai2 = build_ai(args.ai2, None, args.horizon)
+    ai1 = build_ai(args.ai, args.model, args.horizon, args.shield, args.shield_depth)
+    ai2 = build_ai(args.ai2, None, args.horizon, args.shield, args.shield_depth)
     e1 = Engine(seed=args.seed, noise=args.noise)
     e2 = Engine(seed=args.seed, noise=args.noise)
     renderer = DuelRenderer(title=f"Crossy IA — {ai1.name} vs {ai2.name}")
@@ -315,13 +325,21 @@ def cmd_bench(args: argparse.Namespace) -> None:
     ):
         path = DEFAULT_MODELS[name]
         if os.path.exists(path):
-            ais.append(ctor.from_file(path))
+            ai = ctor.from_file(path)
+            # le filet ne s'applique qu'aux IA pures : les robots/hybrides
+            # (search, mcts, guided) ne jouent déjà quasiment aucun coup
+            # prouvé mortel, l'envelopper n'apporterait qu'un coût inutile
+            if args.shield and ai.family == "ia":
+                ai = ShieldedAI(ai, depth=args.shield_depth)
+            ais.append(ai)
         else:
             print(f"({name} ignoré : modèle {path} absent — {TRAIN_HINTS[name]})")
 
     seeds = [10_000 + i for i in range(args.episodes)]
     if args.noise > 0:
         print(f"monde STOCHASTIQUE : bruit {args.noise} (décalage ±1/ligne/tick)")
+    if args.shield:
+        print(f"filet de sécurité actif sur les IA (profondeur {args.shield_depth})")
     print(f"{'agent':<10} {'famille':<8} {'score moy':>10} {'médiane':>8} {'max':>5} "
           f"{'victoires':>10} {'ms moy':>8} {'ms max':>8}")
     for ai in ais:
@@ -389,6 +407,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--noise", type=float, default=0.0,
                         help="monde stochastique : proba/tick/ligne d'un décalage ±1 "
                              "(play, bench, duel)")
+    parser.add_argument("--shield", action="store_true",
+                        help="filet de sécurité (hybride) : vérifie avec le simulateur "
+                             "exact qu'une suite survivante existe avant de jouer le "
+                             "coup préféré de l'IA (play/duel : --ai ; bench : toutes "
+                             "les IA de famille 'ia'). Voir STRATEGIE.md, piste A.")
+    parser.add_argument("--shield-depth", type=int, default=SHIELD_DEPTH,
+                        help=f"profondeur du filet de sécurité (défaut {SHIELD_DEPTH})")
     return parser.parse_args()
 
 
