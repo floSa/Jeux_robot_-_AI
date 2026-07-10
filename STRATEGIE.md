@@ -178,44 +178,95 @@ ajuster l'horizon) sur `play`, `duel`, `bench`. Taxonomie : `dqn-shield` et
 `clone-shield` sont des **hybrides** (comme `guided`) — le réseau décide, le
 filet vérifie ; ce n'est plus une IA pure sans aide extérieure au jeu.
 
-## 5. Feuille de route vers « 200 à tous les coups »
+## 5. Épisode 5 — piste A′ : le filet approfondi passe à 43/50, piste B.1 réfutée
+
+Deux expériences lancées en parallèle dès la reprise de session.
+
+### Sweep de profondeur (3 / 5 / 7)
+
+| Agent | d=3 | d=5 | d=7 |
+|---|---:|---:|---:|
+| `dqn-shield` | 165,1 (35/50) | **178,5 (39/50)** | 178,5 (39/50, plateau) |
+| `clone-shield` | 153,4 (29/50) | 167,6 (34/50) | **180,4 (40/50)** |
+
+Le budget de décision reste large (max 4,7 ms sur 20). Le dqn plafonne à
+d=5 ; le clone (réseau plus faible au départ) continue de profiter d'une
+vérification plus profonde jusqu'à d=7. **`SHIELD_DEPTH` passé à 7.** Effet
+collatéral net : collisions et noyades quasi éliminées des deux agents — les
+échecs restants (9 et 8 sur 50) sont presque tous des **stagnations**, pas
+des impasses locales. Diagnostic confirmé : le filet de survie ne peut rien
+contre un agent qui ne meurt pas mais tourne en rond.
+
+### Sauvetage anti-stagnation (nouvelle brique)
+
+Ajout à `ShieldedAI` : quand `ticks_since_progress >= SHIELD_RESCUE_AFTER`
+(60), un BFS exact borné sur `next_state` (largeur × lignes × profondeur
+états, dédupliqués) cherche le premier coup d'un chemin qui atteint une
+NOUVELLE ligne max en ≤ `SHIELD_RESCUE_DEPTH` (8) ticks, et l'impose s'il
+est sûr. Résultat (50 graines, déterministe, profondeur 7) :
+
+| Agent | sans sauvetage | **avec sauvetage** | stagnations |
+|---|---:|---:|---:|
+| `dqn-shield` | 178,5 (39/50) | **187,9 (43/50)** | 9 → 4 |
+| `clone-shield` | 180,4 (40/50) | **185,0 (42/50)** | 8 → 6 |
+
+**Le dqn atteint 86 % de victoires en monde déterministe.** Coût : pire temps
+de décision mesuré 18,0 ms (budget 20 ms — marge devenue mince, à surveiller
+si on pousse encore la profondeur). Limite assumée pour les stagnations
+restantes : certains sauvetages exigent d'attendre le retour d'un tronc sur
+son cycle complet (jusqu'à ~57 ticks), hors de portée d'un BFS à 8 coups —
+aller plus loin reviendrait à réimplémenter `search` en moins bien, ce qui
+n'est pas l'esprit d'un filet.
+
+### Piste B.1 réfutée : élargir le cône de vision dégrade, sans exception
+
+Hypothèse testée : les erreurs restantes du réflexe pur viennent d'un cône
+trop court (t..t+3, 6 lignes). Quatre variantes, 4000 épisodes × 2 graines,
+bench 25 graines :
+
+| Variante | Entrée | Bench (moyenne 2 graines) |
+|---|---:|---:|
+| **base (t..t+3, 6 lignes)** | 482 | **83,4** |
+| + 2 lignes (rows6) | 642 | 61,6 |
+| + 2 ticks (t5) | 710 | 49,3 |
+| + 4 ticks (t7) | 938 | 36,9 |
+| cumul (t7-rows6) | 1250 | 28,0 |
+
+**Dégradation monotone, sans une seule exception sur 8 runs.** Même
+diagnostic que la mémoire par pile et le réseau à 128 neurones (Épisode 2) :
+à budget d'entraînement fixe, chaque paramètre d'entrée supplémentaire coûte
+plus qu'il n'apporte. **Piste B.1 classée non retenue** ; le cône actuel
+(t+3, 6 lignes) reste la config optimale mesurée. La piste B reste ouverte
+via B.2 (convolution 1D) et B.3 (DQfD/init clone) — des changements
+d'architecture, pas de taille d'entrée.
+
+## 6. Feuille de route vers « 200 à tous les coups »
 
 Le constat de départ (avant le filet) : le dqn mourait **en jouant**
-(collisions 19, noyades 11, sorties 9), plus en hésitant. Or gagner exige
-~2000 décisions consécutives sans une seule erreur fatale : même 99,9 % de
-décisions justes → ~87 % de parties perdues. La piste A vient de combler
-l'essentiel de cet écart en monde déterministe (35/50 victoires) ; il reste
-deux chantiers, du plus mûr au plus exploratoire :
+(collisions 19, noyades 11, sorties 9), plus en hésitant. La piste A puis A′
+ont comblé l'essentiel de cet écart en monde déterministe : **43/50
+victoires, 187,9 de moyenne**. Restent :
 
-### Piste A′ — approfondir le filet (prolongement direct, déjà mesuré comme rentable)
+### Piste A″ — dernier kilomètre du filet (le plus mûr)
 
 - **Filet robuste au bruit** : vérifier la survie sur plusieurs tirages de
-  turbulence plutôt qu'un seul (expectimax local sur `_survives`) — cible
-  directement la limite mesurée ci-dessus.
-- **Profondeur > 3** : le budget est à peine entamé (9,5 ms sur 20) ; tester
-  `--shield-depth 5` ou 7 pourrait rattraper une partie des 7 stagnations et
-  4 sorties d'écran restantes (impasses qu'un horizon plus long verrait venir).
-- **Couvrir la stagnation** : ajouter un critère « pas de progrès en Y depuis
-  N ticks » à la vérification, pour que le filet agisse aussi contre les
-  parties qui trament sans mourir.
+  turbulence plutôt qu'un seul (expectimax local sur `_survives`) — seule
+  faiblesse encore non traitée (sous bruit, le gain fond toujours).
+- **Sauvetage à horizon variable** : certaines stagnations attendent un
+  cycle de tronc complet (~57 ticks) ; un `SHIELD_RESCUE_DEPTH` adaptatif
+  (ou mémoïsé sur les cycles déjà vus) pourrait grappiller les derniers %.
 
-### Piste B — pousser le réflexe pur, sans filet (le vrai défi, statut inchangé)
+### Piste B — pousser le réflexe pur, sans filet (le vrai défi)
 
-Dans l'ordre de rapport gain/effort attendu :
-
-1. **Élargir le cône de vision** (GRID_TIME_PLANES jusqu'à t+7, lignes
-   jusqu'à +6) : les erreurs actuelles ressemblent à des choix localement
-   corrects mais perdants à 5-10 ticks — exactement ce que le cône actuel
-   (t+3, +4 lignes) ne montre pas. Expérience directe avec le harnais
-   existant (~30 min). Attention mesurée : entrée plus grande = apprentissage
-   plus lent, à compenser par plus d'épisodes.
+1. ~~Élargir le cône de vision~~ — **testé et réfuté** (Épisode 5).
 2. **Architecture convolutionnelle 1D sur les colonnes** : un MLP dense doit
    réapprendre chaque motif à chaque position ; une convolution partage les
    poids entre colonnes (équivariance par translation — la situation « trou à
-   gauche » est la même partout). C'est LE remplacement de capacité qui a des
-   chances de payer là où « plus de neurones » a toujours échoué. À écrire en
-   numpy (forward + backward, ~100 lignes, vérification par gradient numérique
-   comme pour le MLP).
+   gauche » est la même partout). C'est maintenant LE candidat n°1 : la
+   piste B.1 a prouvé que le problème n'est pas « voir plus loin » mais
+   « mieux exploiter ce qui est déjà vu ». À écrire en numpy (forward +
+   backward, ~100 lignes, vérification par gradient numérique comme pour
+   le MLP).
 3. **DQfD / initialisation par le clone** : pré-remplir le replay avec des
    transitions de `search` (ou initialiser le réseau Q depuis la politique du
    clone-DAgger) — le RL part alors d'un comportement déjà compétent au lieu
@@ -228,14 +279,11 @@ Dans l'ordre de rapport gain/effort attendu :
    progressait toujours à 12 000 épisodes ; viser 50 000+ (l'entraînement est
    parallèle et ne coûte que quelques dizaines de minutes).
 
-Pronostic mis à jour : la piste A a déjà démontré qu'un « réseau + filet »
-gagne 70 % des parties en monde déterministe — au-delà de ça (impasses à
-3+ coups, robustesse au bruit), la piste A′ est le prolongement le plus
-rentable. La piste B (réflexe pur, sans aucune vérification externe) reste
-le vrai défi scientifique : peut-elle un jour se passer du filet ? Pronostic
-honnête : viser 120-160 de moyenne en pur réflexe est réaliste ; approcher
-200/200 **sans filet ni recherche** demanderait probablement une architecture
-qualitativement différente (piste B.2) plutôt qu'un réglage de plus.
+Pronostic mis à jour : « réseau + filet » atteint désormais 86 % de victoires
+en monde déterministe — la piste A″ (bruit) est la dernière brique pour
+fermer complètement cette voie. La piste B (réflexe pur) a perdu son option
+la moins chère (élargir la vue) ; B.2 (convolution) est maintenant le seul
+levier d'architecture crédible pour un réflexe fort sans filet ni recherche.
 
 ### Chantiers annexes (indépendants)
 
@@ -245,7 +293,7 @@ qualitativement différente (piste B.2) plutôt qu'un réglage de plus.
 - **Lignes de train** (gameplay), **tournoi Elo** : voir « Pistes restantes »
   de ROBOTS.md.
 
-## 6. Reprendre le projet en 5 minutes
+## 7. Reprendre le projet en 5 minutes
 
 ```bash
 uv sync                                                  # environnement
@@ -260,7 +308,8 @@ briques rejetées restent activables : FRAME_STACK, DQN_NSTEP, DQN_DOUBLE,
 DQN_CURRICULUM_PROB, RL_SHAPING, DQN_SENSOR), `sensors.py` (les deux
 générations de capteurs + dispatch automatique par taille d'entrée du modèle),
 `shaping.py` (potentiels), `ai_qlearning.py` (DQN + multi-graines),
-`ai_hybrid.py` (imitation + DAgger + recherche guidée).
+`ai_hybrid.py` (imitation + DAgger + recherche guidée + `ShieldedAI` filet
+de sécurité + sauvetage anti-stagnation).
 
 Détail d'exécution : les threads BLAS sont épinglés à 1 dans `main.py`
 (matrices minuscules : le multi-threading coûtait jusqu'à 10× ; ne pas retirer).

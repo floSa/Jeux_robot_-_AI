@@ -106,7 +106,7 @@ uv sync
 # session visuelle : n'importe lequel des agents
 uv run python main.py --mode play --ai search --seed 3
 uv run python main.py --mode play --ai mcts
-uv run python main.py --mode play --ai dqn --shield   # + filet de sécurité (91 -> 165 en moyenne)
+uv run python main.py --mode play --ai dqn --shield   # + filet de sécurité (91 -> 188 en moyenne)
 
 # duel : deux agents côte à côte sur la même graine
 uv run python main.py --mode duel --ai search --ai2 mcts --seed 3
@@ -241,10 +241,10 @@ Le déblocage n'est pas venu d'un meilleur algorithme mais de la **représentati
 t..t+3** (le monde périodique rend la projection exacte), plus DAgger pour l'imitation.
 
 **Avec `--shield`** (filet de sécurité : le simulateur exact vérifie chaque coup avant de
-le jouer), le **DQN monte à 165 de moyenne et 35 victoires sur 50** (le clone à 153 et
-29/50) — sans changer un seul paramètre du réseau. Ce gain fond presque entièrement sous
-bruit, pour une raison précise et documentée (le filet suppose que la turbulence actuelle
-persiste, comme les planificateurs).
+le jouer, + sauvetage anti-stagnation), le **DQN monte à 188 de moyenne et 43 victoires
+sur 50** (86 %, le clone à 185 et 42/50) — sans changer un seul paramètre du réseau. Ce
+gain fond presque entièrement sous bruit, pour une raison précise et documentée (le filet
+suppose que la turbulence actuelle persiste, comme les planificateurs).
 
 L'enquête complète — pourquoi les IA plafonnaient, ce que les remèdes de la littérature ont
 réellement donné (verdict d'ablation contre-intuitif), le déblocage par la vision, et le
