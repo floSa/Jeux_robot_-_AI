@@ -261,3 +261,13 @@ planification ni le réflexe appris ne gardent d'avantage décisif.
 
 Chaque partie étant reproductible (`--seed`), tout écart entre IA s'explique par la décision,
 jamais par le tirage du monde.
+
+---
+
+## Licences & composants
+
+| Composant | Rôle | Licence |
+|---|---|---|
+| NumPy | Calcul numérique (agents, projections) | BSD-3-Clause |
+| pygame | Rendu du jeu | LGPL-2.1 |
+| **Ce projet** | Code applicatif | MIT — Copyright (c) 2026 floSa `<à confirmer : aucun fichier LICENSE présent>` |
