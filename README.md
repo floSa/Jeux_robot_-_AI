@@ -1,10 +1,17 @@
 # Crossy IA — simulateur Crossy Road et comparateur de robots
 
-> 🧭 **Pour reprendre le projet** : [STRATEGIE.md](STRATEGIE.md) — la méthode, toutes les
+**Copie de Crossy Road sur grille, découplée de l'affichage, pour faire s'affronter robots déterministes et IA apprenantes sur des mondes strictement identiques.**
+
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-1.26+-013243?logo=numpy&logoColor=white)
+![pygame](https://img.shields.io/badge/pygame-2.5+-6C9A3F)
+
+> **Pour reprendre le projet** : [STRATEGIE.md](STRATEGIE.md) — la méthode, toutes les
 > hypothèses testées (adoptées comme rejetées) avec leurs chiffres, l'état actuel, et la
 > feuille de route argumentée vers « 200 à tous les coups ».
 >
-> 🕸️ **Carte du code** : [`graphify-out/GRAPH_REPORT.md`](graphify-out/GRAPH_REPORT.md) —
+> **Carte du code** : [`graphify-out/GRAPH_REPORT.md`](graphify-out/GRAPH_REPORT.md) —
 > graphe de connaissances du projet (code + docs), généré par le skill `graphify`. Ouvrir
 > `graphify-out/graph.html` dans un navigateur pour l'explorer visuellement, ou poser une
 > question en langage naturel sur le code — un assistant équipé du skill interroge le

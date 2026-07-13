@@ -69,7 +69,7 @@ retours multi-pas (DQN_NSTEP), curriculum rivières, Double DQN.
 | Mémoire ×4 aide (POMDP) | ablation add./soustr. | 13,0 → 7,9 | ❌ nuit à ce budget |
 | Retours 3 pas aident | idem | 13,0 → 7,7 | ❌ nuit (biais hors-politique) |
 | Curriculum rivières aide | idem | 13,0 → 9,3 | ❌ nuit |
-| Shaping « plateforme » aide | idem | 13,0 → 12,3 | ➖ neutre |
+| Shaping « plateforme » aide | idem | 13,0 → 12,3 | neutre |
 | Double DQN + réseau 128 aident | idem | 13,9 → 9,6 | ❌ capacité nuit, double neutre |
 | **La graine domine tout** | même recette, graines multiples | 6,5 à 13,9 (×2) | ✅ **multi-graines `--workers`** |
 | Entraîner plus longtemps | 4000 → 10 000 ép. × 10 graines | validations 25-38,8 (avant : 21) | ✅ adopté |

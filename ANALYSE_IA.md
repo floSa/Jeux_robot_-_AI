@@ -113,7 +113,7 @@ Chacune de ces difficultés est un domaine de recherche actif — et chacune sug
    **✅ implémenté (`FRAME_STACK`), mesuré NÉGATIF à notre budget.**
 3. **Exploration dirigée** — récompense intrinsèque de nouveauté/curiosité, ou boucle façon
    *Go-Explore* (mémoriser les états d'où l'on a progressé, y retourner, explorer de là) [2].
-   *(cause 4)* — **⏳ non implémenté.**
+   *(cause 4)* — **Non implémenté.**
 4. **Curriculum ciblé rivières** — entraîner spécifiquement à traverser des rivières de plus
    en plus larges, plutôt que « routes d'abord » ; les curricula automatiques sont efficaces
    sur les récompenses creuses [8][9]. *(cause 2)* —
@@ -121,10 +121,10 @@ Chacune de ces difficultés est un domaine de recherche actif — et chacune sug
 5. **Pénaliser explicitement l'irréversible / replay priorisé** — donner plus de poids aux
    transitions rares (traversées réussies, morts évitables) et rendre les états mortels
    explicitement « pires », pour stabiliser le DQN [1]. *(cause 1)* —
-   **🟡 partiellement : Double DQN implémenté (`DQN_DOUBLE`), mesuré neutre ; replay priorisé non fait.**
+   **Partiellement : Double DQN implémenté (`DQN_DOUBLE`), mesuré neutre ; replay priorisé non fait.**
 6. **Aller au bout de l'hybride (AlphaZero-like)** — apprendre une *fonction de valeur* qui
    guide vraiment la recherche (pas seulement l'ordre des coups), pour combiner la robustesse
-   de l'apprentissage et la précision de la planification. *(cause 5)* — **⏳ non implémenté.**
+   de l'apprentissage et la précision de la planification. *(cause 5)* — **Non implémenté.**
 7. **Simplement entraîner beaucoup plus longtemps** — le DQN progressait encore à 4000
    épisodes (record 75) ; c'est le levier le moins malin mais réel. —
    **✅ fait : 10 000 épisodes × 10 graines avec sélection sur validation — c'est CE levier
