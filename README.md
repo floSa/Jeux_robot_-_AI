@@ -4,8 +4,8 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
-![NumPy](https://img.shields.io/badge/NumPy-1.26+-013243?logo=numpy&logoColor=white)
-![pygame](https://img.shields.io/badge/pygame-2.5+-6C9A3F)
+![NumPy](https://img.shields.io/badge/NumPy-2.2+-013243?logo=numpy&logoColor=white)
+![pygame](https://img.shields.io/badge/pygame-2.6.1+-6C9A3F)
 
 > **Pour reprendre le projet** : [STRATEGIE.md](STRATEGIE.md) — la méthode, toutes les
 > hypothèses testées (adoptées comme rejetées) avec leurs chiffres, l'état actuel, et la
