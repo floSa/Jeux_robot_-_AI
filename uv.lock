@@ -20,8 +20,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pygame", specifier = ">=2.5" },
+    { name = "numpy", specifier = ">=2.2" },
+    { name = "pygame", specifier = ">=2.6.1" },
 ]
 
 [[package]]
